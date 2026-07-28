@@ -1,0 +1,139 @@
+=========================================
+Lab 007-009 - Inter-VLAN Routing (Router-on-a-Stick)
+Jeremy's IT Lab - CCNA
+======================
+
+LAB OBJECTIVE
+Implement Inter-VLAN Routing using the Router-on-a-Stick method and troubleshoot common Layer 2 and Layer 3 configuration issues until all VLANs can communicate successfully.
+
+==================================================
+TOPOLOGY
+========
+
+PC1 (VLAN 10)
+|
+PC2 (VLAN 10)
+|
+SW1
+|
+Trunk Link
+|
+R1
+|
+PC3 (VLAN 20)
+PC4 (VLAN 20)
+
+==================================================
+CONFIGURATION COMMANDS
+======================
+
+SWITCH CONFIGURATION
+
+| Command                             | Explanation                                  |
+| ----------------------------------- | -------------------------------------------- |
+| enable                              | Enters Privileged EXEC mode.                 |
+| configure terminal                  | Enters Global Configuration mode.            |
+| hostname SW1                        | Assigns the switch hostname.                 |
+| vlan 10                             | Creates VLAN 10.                             |
+| name SALES                          | Assigns a name to VLAN 10.                   |
+| vlan 20                             | Creates VLAN 20.                             |
+| name HR                             | Assigns a name to VLAN 20.                   |
+| interface range fa0/1-2             | Selects multiple interfaces.                 |
+| switchport mode access              | Configures ports as access ports.            |
+| switchport access vlan 10           | Assigns ports to VLAN 10.                    |
+| interface range fa0/3-4             | Selects another group of interfaces.         |
+| switchport mode access              | Configures ports as access ports.            |
+| switchport access vlan 20           | Assigns ports to VLAN 20.                    |
+| interface g0/1                      | Selects the uplink interface.                |
+| switchport mode trunk               | Configures the interface as an 802.1Q trunk. |
+| switchport trunk allowed vlan 10,20 | Allows VLANs 10 and 20 across the trunk.     |
+| no shutdown                         | Enables the interface.                       |
+| end                                 | Returns to Privileged EXEC mode.             |
+| copy running-config startup-config  | Saves the running configuration.             |
+
+ROUTER CONFIGURATION
+
+| Command                               | Explanation                                             |
+| ------------------------------------- | ------------------------------------------------------- |
+| enable                                | Enters Privileged EXEC mode.                            |
+| configure terminal                    | Enters Global Configuration mode.                       |
+| hostname R1                           | Assigns the router hostname.                            |
+| interface g0/0                        | Selects the physical interface connected to the switch. |
+| no shutdown                           | Enables the physical interface.                         |
+| interface g0/0.10                     | Creates a subinterface for VLAN 10.                     |
+| encapsulation dot1Q 10                | Enables 802.1Q tagging for VLAN 10.                     |
+| ip address 192.168.10.1 255.255.255.0 | Configures the default gateway for VLAN 10.             |
+| interface g0/0.20                     | Creates a subinterface for VLAN 20.                     |
+| encapsulation dot1Q 20                | Enables 802.1Q tagging for VLAN 20.                     |
+| ip address 192.168.20.1 255.255.255.0 | Configures the default gateway for VLAN 20.             |
+| end                                   | Returns to Privileged EXEC mode.                        |
+| copy running-config startup-config    | Saves the running configuration.                        |
+
+PC CONFIGURATION
+
+| Setting         | Purpose                                                       |
+| --------------- | ------------------------------------------------------------- |
+| IP Address      | Assigns a unique IP address to each PC.                       |
+| Subnet Mask     | Defines the network and host portions of the address.         |
+| Default Gateway | Uses the router subinterface IP for inter-VLAN communication. |
+
+==================================================
+VERIFICATION COMMANDS
+=====================
+
+| Command                               | Explanation                                      |
+| ------------------------------------- | ------------------------------------------------ |
+| show vlan brief                       | Displays VLANs and assigned ports.               |
+| show interfaces trunk                 | Verifies trunk status and allowed VLANs.         |
+| show interfaces switchport            | Displays switchport mode and VLAN information.   |
+| show ip interface brief               | Verifies interface status and IP addresses.      |
+| show running-config                   | Displays the active configuration.               |
+| show running-config interface g0/0.10 | Verifies the VLAN 10 subinterface configuration. |
+| show running-config interface g0/0.20 | Verifies the VLAN 20 subinterface configuration. |
+| show interfaces g0/0                  | Checks the physical interface status.            |
+| show arp                              | Displays the ARP table.                          |
+| show mac address-table                | Displays learned MAC addresses.                  |
+| show cdp neighbors                    | Displays directly connected Cisco devices.       |
+| show cdp entry SW1                    | Displays detailed neighbour information.         |
+| ping                                  | Tests end-to-end connectivity.                   |
+| traceroute                            | Verifies the Layer 3 forwarding path.            |
+
+==================================================
+TROUBLESHOOTING PERFORMED
+=========================
+
+✓ Verified VLAN creation.
+✓ Verified VLAN membership.
+✓ Verified access port configuration.
+✓ Verified trunk configuration.
+✓ Verified allowed VLANs.
+✓ Verified native VLAN configuration.
+✓ Verified router subinterfaces.
+✓ Verified IEEE 802.1Q encapsulation.
+✓ Verified IP addressing.
+✓ Verified default gateways.
+✓ Verified interface status.
+✓ Tested connectivity using Ping.
+✓ Verified forwarding path using Traceroute.
+✓ Corrected configuration errors and restored Inter-VLAN communication.
+
+==================================================
+CONCEPTS LEARNED
+================
+
+• VLAN Configuration
+• Access Ports
+• Trunk Ports
+• IEEE 802.1Q
+• Router-on-a-Stick
+• Router Subinterfaces
+• Inter-VLAN Routing
+• Layer 2 Troubleshooting
+• Layer 3 Troubleshooting
+• Cisco IOS Verification Commands
+
+==================================================
+LAB RESULT
+==========
+
+Successfully configured Router-on-a-Stick to enable communication between multiple VLANs. Verified the implementation using Cisco IOS verification commands and resolved Layer 2 and Layer 3 configuration issues to achieve successful end-to-end connectivity.
