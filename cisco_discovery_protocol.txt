@@ -1,0 +1,45 @@
+=========================================
+Lab Name: CDP Neighbour Discovery
+=========================================
+
+Objective:
+Learn how Cisco Discovery Protocol (CDP) discovers directly connected Cisco devices.
+
+Topology:
+SW1 ---- R1 ---- R2 ---- L3SW1
+
+Commands Used:
+- configure terminal
+  Entered global configuration mode.
+
+- interface g0/0
+  Selected the interface to configure.
+
+- no shutdown
+  Enabled the interface and brought the link up.
+
+- show ip interface brief
+  Verified interface status.
+
+- show cdp neighbors
+  Displayed directly connected Cisco neighbours.
+
+- show cdp entry SW1
+  Displayed detailed information about SW1.
+
+- show version
+  Verified IOS version, hardware model and system information.
+
+Verification:
+- All interfaces reached the up/up state.
+- CDP successfully discovered neighbouring devices.
+- Device details matched the physical topology.
+
+Outcome:
+Successfully configured the lab and verified neighbour discovery using Cisco Discovery Protocol (CDP).
+
+Concepts Learned:
+- Cisco Discovery Protocol (CDP)
+- Interface administration
+- Neighbour verification
+- IOS verification commands
