@@ -1,0 +1,203 @@
+==================================================
+LOOPBACK INTERFACE CONFIGURATION
+=================================
+
+LAB OBJECTIVE
+
+The objective of this lab is to configure and understand loopback interfaces on Cisco routers. 
+Two routers (R1 and R2) are configured with physical connectivity using GigabitEthernet interfaces and logical Loopback interfaces.
+Loopback interfaces are virtual interfaces that remain operational even if physical interfaces fail.
+Static routing is configured to allow communication between the loopback networks of both routers.
+The lab also demonstrates verification of loopback connectivity and removal of loopback interfaces.
+
+
+==================================================
+TOPOLOGY
+========
+
+                 192.168.1.0/24
+
+          G0/0/0              G0/0/0
+       +----------+          +----------+
+       |    R1    |----------|    R2    |
+       +----------+          +----------+
+          |                     |
+          |                     |
+    Loopback0              Loopback0
+     1.1.1.1/32             2.2.2.2/32
+
+
+R1 G0/0/0  : 192.168.1.1/24
+R2 G0/0/0  : 192.168.1.2/24
+
+R1 Loopback0 : 1.1.1.1/32
+R2 Loopback0 : 2.2.2.2/32
+
+
+==================================================
+CONFIGURATION COMMANDS
+======================
+
+
+------------------------------
+Router Configuration - R1
+------------------------------
+
+Command                                  Explanation
+
+enable                                   Enters Privileged EXEC mode.
+
+configure terminal                        Enters Global Configuration mode.
+
+interface gigabitEthernet0/0/0            Enters the physical interface connected to R2.
+
+ip address 192.168.1.1 255.255.255.0      Assigns IP address to the router interface.
+
+no shutdown                               Enables the physical interface.
+
+exit                                      Returns to Global Configuration mode.
+
+interface loopback0                       Creates a logical Loopback0 interface.
+
+ip address 1.1.1.1 255.255.255.255        Assigns a /32 IP address to the loopback interface.
+
+exit                                      Returns to Global Configuration mode.
+
+ip route 2.2.2.2 255.255.255.255 192.168.1.2
+                                          Creates a static route to R2 loopback network.
+
+end                                       Exits configuration mode.
+
+write memory                              Saves the configuration permanently.
+
+
+
+------------------------------
+Router Configuration - R2
+------------------------------
+
+Command                                  Explanation
+
+enable                                   Enters Privileged EXEC mode.
+
+configure terminal                        Enters Global Configuration mode.
+
+interface gigabitEthernet0/0/0            Enters the physical interface connected to R1.
+
+ip address 192.168.1.2 255.255.255.0      Assigns IP address to the router interface.
+
+no shutdown                               Enables the physical interface.
+
+exit                                      Returns to Global Configuration mode.
+
+interface loopback0                       Creates a logical Loopback0 interface.
+
+ip address 2.2.2.2 255.255.255.255        Assigns a /32 IP address to the loopback interface.
+
+exit                                      Returns to Global Configuration mode.
+
+ip route 1.1.1.1 255.255.255.255 192.168.1.1
+                                          Creates a static route to R1 loopback network.
+
+end                                       Exits configuration mode.
+
+write memory                              Saves the configuration permanently.
+
+
+
+==================================================
+VERIFICATION COMMANDS
+=====================
+
+
+Command                                  Explanation
+
+show ip interface brief                   Displays interface status and assigned IP addresses.
+
+show ip route                             Displays the routing table and learned routes.
+
+show ip route static                      Displays only static routing entries.
+
+show running-config                       Displays the current router configuration.
+
+ping 192.168.1.1                          Tests connectivity to R1 physical interface.
+
+ping 192.168.1.2                          Tests connectivity to R2 physical interface.
+
+ping 1.1.1.1                              Tests local R1 loopback connectivity.
+
+ping 2.2.2.2                              Tests connectivity from R1 to R2 loopback.
+
+ping 1.1.1.1                              Tests connectivity from R2 to R1 loopback.
+
+show ip interface loopback0               Verifies Loopback0 interface configuration.
+
+
+
+==================================================
+TROUBLESHOOTING PERFORMED
+=========================
+
+✓ Verified physical interface status using show ip interface brief.
+
+✓ Verified GigabitEthernet interfaces were enabled using no shutdown.
+
+✓ Verified IP addressing on both router interfaces.
+
+✓ Verified direct connectivity between R1 and R2 physical interfaces.
+
+✓ Verified loopback interfaces were created successfully.
+
+✓ Verified loopback interfaces were assigned /32 host addresses.
+
+✓ Checked routing tables to identify missing loopback routes.
+
+✓ Identified that routers only knew connected networks by default.
+
+✓ Added static routes to reach remote loopback interfaces.
+
+✓ Verified static routes appeared in the routing table.
+
+✓ Tested end-to-end connectivity between both loopback interfaces.
+
+✓ Verified loopback interfaces can be removed using no interface loopback0.
+
+
+
+==================================================
+CONCEPTS LEARNED
+================
+
+• Loopback Interface
+
+• Logical Interface
+
+• Physical Interface vs Logical Interface
+
+• IPv4 Addressing
+
+• /32 Host Route
+
+• Connected Routes
+
+• Local Routes
+
+• Static Routing
+
+• Next-Hop Routing
+
+• Routing Table
+
+• Cisco IOS Interface Configuration
+
+• Network Connectivity Testing Using Ping
+
+• Router Interface Verification
+
+
+
+==================================================
+LAB RESULT
+==========
+
+In this lab, loopback interfaces were successfully configured on two Cisco routers to understand the behavior of logical interfaces. Physical connectivity between R1 and R2 was established using GigabitEthernet interfaces with IPv4 addressing. Loopback0 interfaces were created on both routers using /32 host addresses, and static routes were configured to provide communication between the loopback networks. Routing tables and ping tests were used to verify successful connectivity between local and remote loopback interfaces. This lab introduced the importance of loopback interfaces, which are widely used in enterprise networks for router identification, routing protocols, management, and testing purposes.
