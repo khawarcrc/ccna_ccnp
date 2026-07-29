@@ -1,0 +1,230 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 020 - CCNA Review Lab
+(Hostnames, Enable Secret, VLANs, Trunks,
+Port Security & Router-on-a-Stick)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure device hostnames, secure privileged mode, create VLANs,
+configure access ports and trunk links, implement Port Security,
+and enable Inter-VLAN Routing using the Router-on-a-Stick method.
+
+==================================================
+TOPOLOGY
+==================================================
+
+             G0/0                  G0/1
+         +---------+          +---------+
+         |   R1    |----------|   SW1   |
+         +---------+          +---------+
+                                  |
+                               Fa0/1 Trunk
+                                  |
+                             +---------+
+                             |   SW2   |
+                             +---------+
+                             |        |
+                           PC3      PC4
+                             |
+                           PC1 PC2
+
+VLAN 13 : PC1, PC3
+VLAN 24 : PC2, PC4
+
+==================================================
+STEP 1 - HOSTNAME CONFIGURATION
+==================================================
+
+-------------------------
+R1
+-------------------------
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter Privileged EXEC mode.
+configure terminal                           Enter Global Configuration mode.
+hostname R1                                  Configure router hostname.
+
+-------------------------
+SW1
+-------------------------
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter Privileged EXEC mode.
+configure terminal                           Enter Global Configuration mode.
+hostname SW1                                 Configure switch hostname.
+
+-------------------------
+SW2
+-------------------------
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter Privileged EXEC mode.
+configure terminal                           Enter Global Configuration mode.
+hostname SW2                                 Configure switch hostname.
+
+==================================================
+STEP 2 - ENABLE SECRET
+==================================================
+
+(All Devices)
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+configure terminal                           Enter Global Configuration mode.
+enable secret CCNA                           Configure encrypted privileged password.
+end                                          Return to EXEC mode.
+copy running-config startup-config           Save configuration.
+
+==================================================
+STEP 3 - VLAN CONFIGURATION
+==================================================
+
+SW1
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+configure terminal                           Enter configuration mode.
+vlan 13                                      Create VLAN 13.
+name VLAN13                                  Assign VLAN name.
+vlan 24                                      Create VLAN 24.
+name VLAN24                                  Assign VLAN name.
+interface fa0/2                              Select PC1 interface.
+switchport mode access                       Configure as access port.
+switchport access vlan 13                    Assign interface to VLAN 13.
+interface fa0/3                              Select PC2 interface.
+switchport mode access                       Configure as access port.
+switchport access vlan 24                    Assign interface to VLAN 24.
+
+SW2
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+configure terminal                           Enter configuration mode.
+vlan 13                                      Create VLAN 13.
+name VLAN13                                  Assign VLAN name.
+vlan 24                                      Create VLAN 24.
+name VLAN24                                  Assign VLAN name.
+interface fa0/2                              Select PC3 interface.
+switchport mode access                       Configure as access port.
+switchport access vlan 13                    Assign interface to VLAN 13.
+interface fa0/3                              Select PC4 interface.
+switchport mode access                       Configure as access port.
+switchport access vlan 24                    Assign interface to VLAN 24.
+
+Verification
+
+show vlan brief                              Verify VLAN membership.
+
+==================================================
+STEP 4 - TRUNK CONFIGURATION
+==================================================
+
+SW1
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+interface fa0/1                              Select link to SW2.
+switchport mode trunk                        Configure trunk port.
+interface g0/1                               Select link to R1.
+switchport mode trunk                        Configure trunk toward router.
+
+SW2
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+interface fa0/1                              Select link to SW1.
+switchport mode trunk                        Configure trunk port.
+
+Verification
+
+show cdp neighbors                           Verify connected devices.
+show interfaces trunk                        Verify trunk status.
+
+==================================================
+STEP 5 - PORT SECURITY
+==================================================
+
+SW1 & SW2
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+interface range fa0/2-3                      Select PC interfaces.
+switchport port-security                     Enable Port Security.
+switchport port-security mac-address sticky  Learn MAC addresses automatically.
+switchport port-security violation restrict  Restrict unauthorized devices.
+
+Verification
+
+show port-security                           Display Port Security status.
+show port-security address                   Display secure MAC addresses.
+show port-security interface fa0/2           Verify interface security.
+
+==================================================
+STEP 6 - ROUTER-ON-A-STICK
+==================================================
+
+R1
+
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+interface g0/0                               Select physical interface.
+no shutdown                                  Enable physical interface.
+interface g0/0.13                            Create VLAN 13 subinterface.
+encapsulation dot1Q 13                       Tag VLAN 13 traffic.
+ip address 10.0.1.1 255.255.255.0            Configure VLAN 13 gateway.
+interface g0/0.24                            Create VLAN 24 subinterface.
+encapsulation dot1Q 24                       Tag VLAN 24 traffic.
+ip address 10.0.2.1 255.255.255.0            Configure VLAN 24 gateway.
+end                                          Exit configuration mode.
+copy running-config startup-config           Save configuration.
+
+==================================================
+PC ADDRESSING
+==================================================
+
+PC1 : 10.0.1.11/24   Gateway 10.0.1.1
+PC2 : 10.0.2.12/24   Gateway 10.0.2.1
+PC3 : 10.0.1.13/24   Gateway 10.0.1.1
+PC4 : 10.0.2.14/24   Gateway 10.0.2.1
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+show ip interface brief                      Verify interface status.
+show running-config                          Verify configuration.
+show vlan brief                              Verify VLANs.
+show interfaces trunk                        Verify trunks.
+show mac address-table                       Verify MAC learning.
+show port-security                           Verify Port Security.
+show ip route                                Verify connected routes.
+show cdp neighbors                           Verify neighbors.
+
+==================================================
+CONNECTIVITY TESTS
+==================================================
+
+PC1> ping 10.0.1.13      Verify same VLAN communication.
+PC1> ping 10.0.2.12      Verify Inter-VLAN Routing.
+PC1> ping 10.0.2.14      Verify full connectivity.
+PC2> ping 10.0.1.11      Verify Inter-VLAN Routing.
+PC2> ping 10.0.1.13      Verify full connectivity.
+PC2> ping 10.0.2.14      Verify same VLAN communication.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured hostnames, enable secret, VLANs, access ports,
+802.1Q trunks, Sticky MAC Port Security, and Router-on-a-Stick.
+Verified VLAN operation, secure access, trunking, MAC learning,
+Inter-VLAN Routing, and end-to-end connectivity using Cisco IOS
+verification commands and successful ping tests.
