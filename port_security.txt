@@ -1,0 +1,323 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 015-017 - Cisco Port Security
+(Basic Port Security, Sticky MAC, Static Secure MAC)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Implement Cisco Port Security using dynamic secure MAC addresses,
+Sticky MAC learning, and manually configured secure MAC addresses.
+Verify MAC learning, persistence across reloads, and observe
+Port Security violations and interface recovery.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                 Fa0/1                 Fa0/1
+
+            +---------+------------+---------+
+            |                      |
+         +------+               +------+
+         | SW1 |--------------- | SW2 |
+         +------+               +------+
+            | Fa0/2               | Fa0/2
+            |                     |
+         +------+              +------+
+         | PC1 |              | PC2 |
+         +------+              +------+
+
+PC1 : 192.168.1.1/24
+PC2 : 192.168.1.2/24
+
+==================================================
+LAB 1 - BASIC PORT SECURITY
+==================================================
+
+-------------------------
+PC1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+ping 192.168.1.2                                       Generates traffic so both switches learn the PCs' MAC addresses.
+
+-------------------------
+SW1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+enable                                                 Enters Privileged EXEC mode.
+
+show mac address-table                                 Displays dynamically learned MAC addresses.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the interface connected to PC1.
+
+switchport mode access                                 Configures the interface as an Access Port.
+
+switchport port-security                               Enables Port Security on the interface.
+
+switchport port-security maximum 1                     Allows only one secure MAC address.
+
+switchport port-security violation shutdown            Shuts down the interface if a violation occurs.
+
+end                                                    Returns to Privileged EXEC mode.
+
+copy running-config startup-config                     Saves the configuration.
+
+-------------------------
+SW2
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+enable                                                 Enters Privileged EXEC mode.
+
+show mac address-table                                 Displays dynamically learned MAC addresses.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the interface connected to PC2.
+
+switchport mode access                                 Configures the interface as an Access Port.
+
+switchport port-security                               Enables Port Security on the interface.
+
+switchport port-security maximum 1                     Allows only one secure MAC address.
+
+switchport port-security violation shutdown            Shuts down the interface if a violation occurs.
+
+end                                                    Returns to Privileged EXEC mode.
+
+copy running-config startup-config                     Saves the configuration.
+
+==================================================
+LAB 2 - STICKY MAC ADDRESS
+==================================================
+
+-------------------------
+PC1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+ping 192.168.1.2                                       Generates traffic so SW1 learns PC1's MAC address.
+
+-------------------------
+SW1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+enable                                                 Enters Privileged EXEC mode.
+
+show port-security address                             Displays secure MAC addresses.
+
+show running-config interface fa0/2                    Displays the current interface configuration.
+
+copy running-config startup-config                     Saves the running configuration.
+
+reload                                                 Reloads the switch.
+
+enable                                                 Re-enters Privileged EXEC mode after reload.
+
+show port-security address                             Verifies dynamically learned MAC was removed.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the secured interface.
+
+switchport port-security mac-address sticky            Enables Sticky MAC learning.
+
+end                                                    Returns to Privileged EXEC mode.
+
+ping 192.168.1.2                                       Generates traffic so Sticky MAC is learned.
+
+show port-security address                             Verifies Sticky Secure MAC was learned.
+
+show running-config interface fa0/2                    Confirms Sticky MAC appears in the running configuration.
+
+copy running-config startup-config                     Saves the Sticky MAC configuration.
+
+reload                                                 Reloads the switch.
+
+enable                                                 Re-enters Privileged EXEC mode.
+
+show port-security address                             Verifies Sticky MAC remains after reload.
+
+==================================================
+LAB 3 - STATIC SECURE MAC ADDRESS
+==================================================
+
+-------------------------
+PC1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+ping 192.168.1.2                                       Generates traffic so MAC addresses are learned.
+
+-------------------------
+SW1
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+enable                                                 Enters Privileged EXEC mode.
+
+show mac address-table                                 Displays learned MAC addresses.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the interface connected to PC1.
+
+switchport mode access                                 Configures the interface as an Access Port.
+
+switchport port-security                               Enables Port Security.
+
+switchport port-security mac-address <PC1-MAC>         Manually configures PC1's MAC as a secure MAC address.
+
+end                                                    Returns to Privileged EXEC mode.
+
+-------------------------
+SW2
+-------------------------
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+enable                                                 Enters Privileged EXEC mode.
+
+show mac address-table                                 Displays learned MAC addresses.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the interface connected to PC2.
+
+switchport mode access                                 Configures the interface as an Access Port.
+
+switchport port-security                               Enables Port Security.
+
+switchport port-security mac-address <PC2-MAC>         Manually configures PC2's MAC as a secure MAC address.
+
+end                                                    Returns to Privileged EXEC mode.
+
+-------------------------
+TEST PORT SECURITY VIOLATION
+-------------------------
+
+Command / Action                                       Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+Disconnect PC1 from SW1                                Removes the legitimate connection.
+
+Disconnect PC2 from SW2                                Removes the legitimate connection.
+
+Connect PC1 to SW2                                     Connects an unauthorized MAC to SW2.
+
+Connect PC2 to SW1                                     Connects an unauthorized MAC to SW1.
+
+ping 192.168.1.2                                       Triggers a Port Security violation.
+
+show interfaces fastethernet0/2                        Verifies the interface is in an err-disabled state.
+
+configure terminal                                     Enters Global Configuration mode.
+
+interface fastethernet0/2                              Enters the affected interface.
+
+shutdown                                               Administratively disables the interface.
+
+no shutdown                                            Re-enables the interface and clears err-disable.
+
+end                                                    Returns to Privileged EXEC mode.
+
+Reconnect PCs to original switches                     Restores the original topology.
+
+ping 192.168.1.2                                       Verifies successful end-to-end connectivity.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                                Explanation
+-----------------------------------------------------  ------------------------------------------------------------
+
+show mac address-table                                 Displays dynamically learned MAC addresses.
+
+show port-security                                     Displays Port Security status.
+
+show port-security address                             Displays secure MAC addresses.
+
+show port-security interface fa0/2                     Displays Port Security details for Fa0/2.
+
+show running-config                                    Displays the current running configuration.
+
+show running-config interface fa0/2                    Displays the Fa0/2 interface configuration.
+
+show interfaces fastethernet0/2                        Verifies interface status and err-disabled state.
+
+==================================================
+TROUBLESHOOTING PERFORMED
+==================================================
+
+✓ Verified switches learned MAC addresses dynamically.
+✓ Verified PCs generated traffic using ping.
+✓ Verified CAM table entries before and after traffic.
+✓ Enabled Port Security on both access ports.
+✓ Configured maximum secure MAC address.
+✓ Verified default violation mode (Shutdown).
+✓ Verified dynamic secure MAC addresses.
+✓ Verified Sticky MAC learning.
+✓ Verified Sticky MAC persistence after reload.
+✓ Configured static secure MAC addresses.
+✓ Triggered a Port Security violation.
+✓ Verified interface entered err-disabled state.
+✓ Restored the interface using shutdown and no shutdown.
+✓ Verified successful end-to-end connectivity.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Port Security
+• CAM Table
+• Dynamic MAC Learning
+• Secure MAC Address
+• Sticky Secure MAC Address
+• Static Secure MAC Address
+• Access Ports
+• Port Security Violation
+• Protect Mode
+• Restrict Mode
+• Shutdown Mode
+• Err-disabled State
+• Interface Recovery
+• MAC Address Persistence
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured Cisco Port Security using dynamic, Sticky, and
+manually configured secure MAC addresses. Verified how switches learn
+MAC addresses, how Sticky MAC preserves learned addresses after a reload,
+and how static secure MAC addresses provide the highest level of control.
+A Port Security violation was intentionally triggered to observe the
+default Shutdown behaviour, after which the interface was manually
+recovered using the shutdown and no shutdown commands. All configurations
+were verified using Cisco IOS show commands, confirming proper operation
+and secure end-to-end connectivity.
