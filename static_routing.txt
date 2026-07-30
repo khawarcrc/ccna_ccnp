@@ -1,0 +1,244 @@
+==================================================
+LAB 018 - STATIC ROUTING
+Jeremy's IT Lab - CCNA
+==================================================
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure Static Routing between two routers so that
+PC1 and PC2 can communicate across different networks.
+
+In this lab, each router initially knows only its
+directly connected networks. Static routes are then
+manually configured so each router knows how to reach
+the remote LAN.
+
+==================================================
+TOPOLOGY
+==================================================
+
+        192.168.1.0/24                 10.0.0.0/24                 192.168.2.0/24
+
+PC1 -------- SW1 -------- R1 ---------------- R2 -------- SW2 -------- PC2
+                          |                  |
+                      G0/0/1            G0/0/1
+                    192.168.1.1       192.168.2.1
+
+                      G0/0/0            G0/0/0
+                      10.0.0.1          10.0.0.2
+
+==================================================
+IP ADDRESSING
+==================================================
+
+R1 G0/0/0      10.0.0.1       /24
+R1 G0/0/1      192.168.1.1    /24
+
+R2 G0/0/0      10.0.0.2       /24
+R2 G0/0/1      192.168.2.1    /24
+
+PC1            192.168.1.10
+Gateway         192.168.1.1
+
+PC2            192.168.2.10
+Gateway         192.168.2.1
+
+==================================================
+WHAT WE LEARNED
+==================================================
+
+• A router automatically learns only directly connected
+  networks.
+
+• Networks that are not directly connected require
+  static routes or a dynamic routing protocol.
+
+• Static routes manually tell the router where a
+  remote network exists.
+
+• Routing always requires two-way communication.
+  Both routers must know how to reach each other's LAN.
+
+==================================================
+R1 CONFIGURATION
+==================================================
+
+Command                                       Explanation
+---------------------------------------------------------------
+enable                                        Enter Privileged EXEC mode.
+configure terminal                            Enter Global Configuration mode.
+
+interface g0/0/0                              Select interface toward R2.
+ip address 10.0.0.1 255.255.255.0             Configure interface IP.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+interface g0/0/1                              Select LAN interface.
+ip address 192.168.1.1 255.255.255.0          Configure gateway for LAN.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+ip route 192.168.2.0 255.255.255.0 10.0.0.2   Route packets for LAN2 to R2.
+
+end                                           Exit Configuration mode.
+write memory                                  Save configuration.
+
+==================================================
+R2 CONFIGURATION
+==================================================
+
+Command                                       Explanation
+---------------------------------------------------------------
+enable                                        Enter Privileged EXEC mode.
+configure terminal                            Enter Global Configuration mode.
+
+interface g0/0/0                              Select interface toward R1.
+ip address 10.0.0.2 255.255.255.0             Configure interface IP.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+interface g0/0/1                              Select LAN interface.
+ip address 192.168.2.1 255.255.255.0          Configure gateway for LAN.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+ip route 192.168.1.0 255.255.255.0 g0/0       Route packets for LAN1 out G0/0.
+
+end                                           Exit Configuration mode.
+write memory                                  Save configuration.
+
+==================================================
+S1 CONFIGURATION
+(Optional - Management Only)
+==================================================
+
+Command                                       Explanation
+---------------------------------------------------------------
+enable                                        Enter Privileged EXEC mode.
+configure terminal                            Enter Global Configuration mode.
+
+hostname S1                                   Set switch hostname.
+no ip domain-lookup                           Disable DNS lookup.
+
+interface vlan 1                              Configure management interface.
+ip address 192.168.1.2 255.255.255.0          Management IP address.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+ip default-gateway 192.168.1.1                Configure default gateway.
+
+end                                           Exit Configuration mode.
+write memory                                  Save configuration.
+
+==================================================
+S2 CONFIGURATION
+(Optional - Management Only)
+==================================================
+
+Command                                       Explanation
+---------------------------------------------------------------
+enable                                        Enter Privileged EXEC mode.
+configure terminal                            Enter Global Configuration mode.
+
+hostname S2                                   Set switch hostname.
+no ip domain-lookup                           Disable DNS lookup.
+
+interface vlan 1                              Configure management interface.
+ip address 192.168.2.2 255.255.255.0          Management IP address.
+no shutdown                                   Enable interface.
+exit                                          Return to Global Config.
+
+ip default-gateway 192.168.2.1                Configure default gateway.
+
+end                                           Exit Configuration mode.
+write memory                                  Save configuration.
+
+==================================================
+PC CONFIGURATION
+==================================================
+
+PC1
+
+IP Address      : 192.168.1.10
+Subnet Mask     : 255.255.255.0
+Default Gateway : 192.168.1.1
+
+
+PC2
+
+IP Address      : 192.168.2.10
+Subnet Mask     : 255.255.255.0
+Default Gateway : 192.168.2.1
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                     Explanation
+---------------------------------------------------------
+show ip interface brief     Verify interface status.
+
+show ip route               Verify routing table.
+
+ping 10.0.0.2               Verify R1 can reach R2.
+
+ping 192.168.2.1            Verify remote router LAN.
+
+ping 192.168.2.10           Verify end-to-end connectivity.
+
+write memory                Save running configuration.
+
+==================================================
+EXPECTED ROUTING TABLE
+==================================================
+
+R1
+
+Connected Routes
+----------------
+C 10.0.0.0/24
+C 192.168.1.0/24
+
+Static Route
+------------
+S 192.168.2.0/24 via 10.0.0.2
+
+
+R2
+
+Connected Routes
+----------------
+C 10.0.0.0/24
+C 192.168.2.0/24
+
+Static Route
+------------
+S 192.168.1.0/24 via G0/0
+
+==================================================
+KEY TAKEAWAYS
+==================================================
+
+1. Routers only know directly connected networks.
+
+2. Static routes manually teach routers where remote
+   networks are located.
+
+3. Both routers require routes for successful
+   two-way communication.
+
+4. Static routes can use either:
+      • Next-Hop IP Address
+      • Exit Interface
+
+5. Always verify your routing table using:
+
+      show ip route
+
+before testing connectivity.
+
+==================================================
+END OF LAB
+==================================================

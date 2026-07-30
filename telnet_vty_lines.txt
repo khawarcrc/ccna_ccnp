@@ -1,0 +1,166 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 010 - Cisco Telnet Configuration
+(Remote Device Management using Telnet)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure remote management access to a Cisco Router and
+Layer 2 Switch using Telnet.
+
+In this lab you will learn how to:
+
+• Configure management IP addresses.
+• Configure a local username and password.
+• Configure VTY (Virtual Terminal) lines.
+• Enable Telnet remote access.
+• Verify successful remote login from a PC.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                 +------------------+
+                 |      PC1         |
+                 | 192.168.1.10/24  |
+                 +---------+--------+
+                           |
+                           |
+                    +------+------+
+                    |     S1      |
+                    | VLAN1: .2   |
+                    +------+------+
+                           |
+                           |
+                    +------+------+
+                    |     R1      |
+                    | G0/0 : .1   |
+                    +-------------+
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface      IP Address        Subnet Mask
+--------------------------------------------------------------
+R1          G0/0           192.168.1.1       255.255.255.0
+S1          VLAN 1         192.168.1.2       255.255.255.0
+PC1         NIC            192.168.1.10      255.255.255.0
+
+Default Gateway (PC1): 192.168.1.1
+
+
+==================================================
+COMMAND FLOW & EXPLANATION
+==================================================
+
+---------------- Router (R1) ----------------
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+enable                                   Enter Privileged EXEC mode.
+configure terminal                       Enter Global Configuration mode.
+interface g0/0                           Select GigabitEthernet 0/0 interface.
+ip address 192.168.1.1 255.255.255.0     Assign IP address to the interface.
+no shutdown                              Enable the interface.
+exit                                     Return to Global Configuration mode.
+username cisco password CCNA             Create a local user account.
+line vty 0 15                            Configure all VTY (remote access) lines.
+login local                              Authenticate using the local username database.
+transport input telnet                   Allow only Telnet connections.
+exit                                     Exit VTY configuration mode.
+end                                      Return to Privileged EXEC mode.
+write memory                             Save configuration to NVRAM.
+
+---------------- Switch (S1) ----------------
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+enable                                   Enter Privileged EXEC mode.
+configure terminal                       Enter Global Configuration mode.
+interface vlan 1                         Enter the management VLAN interface.
+ip address 192.168.1.2 255.255.255.0     Assign management IP address.
+no shutdown                              Activate the VLAN interface.
+exit                                     Return to Global Configuration mode.
+username cisco password CCNA             Create a local user account.
+line vty 0 15                            Configure all remote access lines.
+login local                              Use the local database for authentication.
+transport input telnet                   Allow Telnet connections only.
+exit                                     Exit VTY configuration mode.
+end                                      Return to Privileged EXEC mode.
+write memory                             Save configuration permanently.
+
+==================================================
+PC CONFIGURATION
+==================================================
+
+Desktop
+→ IP Configuration
+
+IP Address : 192.168.1.10
+Subnet Mask: 255.255.255.0
+Gateway    : 192.168.1.1
+
+==================================================
+TELNET VERIFICATION
+==================================================
+
+Connect to Router
+
+PC> telnet 192.168.1.1
+
+Username: cisco
+Password: CCNA
+
+Expected Prompt
+
+R1>
+
+--------------------------------------------------
+
+Connect to Switch
+
+PC> telnet 192.168.1.2
+
+Username: cisco
+Password: CCNA
+
+Expected Prompt
+
+S1>
+
+--------------------------------------------------
+
+Exit Session
+
+exit
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+show ip interface brief
+show running-config
+show line
+show users
+show startup-config
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured management IP addresses.
+✓ Enabled router and switch interfaces.
+✓ Created a local username and password.
+✓ Configured VTY lines for remote access.
+✓ Enabled Telnet authentication using the local database.
+✓ Successfully accessed both devices remotely from PC1.
+✓ Saved the running configuration.
+
+==================================================
+END OF LAB
+==================================================

@@ -1,0 +1,167 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 020 - SSH (Secure Shell) Configuration
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure Secure Shell (SSH) remote access on a Cisco
+Router and Switch. Generate RSA encryption keys,
+create local user authentication, disable Telnet,
+allow only SSH Version 2, and verify secure remote
+management from a PC.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                 192.168.1.0/24
+
+        +---------------------------+
+        |                           |
+      PC1 ------------------------ S1
+                                     |
+                                     |
+                                  G0/0
+                                     |
+                                    R1
+
+==================================================
+IP ADDRESSING
+==================================================
+
+R1 G0/0      : 192.168.1.1 /24
+S1 VLAN1     : 192.168.1.2 /24
+PC1          : 192.168.1.10 /24
+Gateway       : 192.168.1.1
+
+==================================================
+CONFIGURATION COMMANDS
+==================================================
+
+--------------------------------------------------
+R1 CONFIGURATION
+--------------------------------------------------
+
+Command                                  Explanation
+-------                                  ------------------------------
+enable                                   Enter Privileged EXEC mode.
+configure terminal                       Enter Global Configuration mode.
+hostname R1                              Configure device hostname.
+
+interface g0/0                           Enter GigabitEthernet0/0.
+ ip address 192.168.1.1 255.255.255.0    Configure interface IP address.
+ no shutdown                             Enable the interface.
+exit                                     Exit interface configuration.
+
+username cisco password CCNA             Create local SSH user.
+
+ip domain-name cisco.com                 Configure domain name (required for SSH).
+
+crypto key generate rsa                  Generate RSA encryption keys.
+1024                                     Use 1024-bit key size.
+
+line vty 0 15                            Configure all VTY lines.
+ login local                             Authenticate using local user database.
+ transport input ssh                     Allow only SSH connections.
+ exec-timeout 5                          Disconnect idle sessions after 5 minutes.
+exit                                     Exit VTY configuration.
+
+ip ssh version 2                         Enable SSH Version 2.
+
+end                                      Exit configuration mode.
+write memory                             Save configuration.
+
+--------------------------------------------------
+S1 CONFIGURATION
+--------------------------------------------------
+
+Command                                  Explanation
+-------                                  ------------------------------
+enable                                   Enter Privileged EXEC mode.
+configure terminal                       Enter Global Configuration mode.
+hostname S1                              Configure device hostname.
+
+interface vlan 1                         Enter VLAN 1 interface.
+ ip address 192.168.1.2 255.255.255.0    Configure management IP address.
+ no shutdown                             Enable VLAN interface.
+exit                                     Exit interface configuration.
+
+ip default-gateway 192.168.1.1           Configure default gateway.
+
+username cisco password CCNA             Create local SSH user.
+
+ip domain-name cisco.com                 Configure domain name (required for SSH).
+
+crypto key generate rsa                  Generate RSA encryption keys.
+1024                                     Use 1024-bit key size.
+
+line vty 0 15                            Configure all VTY lines.
+ login local                             Authenticate using local user database.
+ transport input ssh                     Allow only SSH connections.
+ exec-timeout 5                          Disconnect idle sessions after 5 minutes.
+exit                                     Exit VTY configuration.
+
+ip ssh version 2                         Enable SSH Version 2.
+
+end                                      Exit configuration mode.
+write memory                             Save configuration.
+
+==================================================
+PC1 CONFIGURATION
+==================================================
+
+IP Address      : 192.168.1.10
+Subnet Mask     : 255.255.255.0
+Default Gateway : 192.168.1.1
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                  Explanation
+-------                                  ------------------------------
+show ip ssh                              Verify SSH is enabled.
+show ssh                                 View active SSH sessions.
+show crypto key mypubkey rsa             Verify RSA keys exist.
+show running-config | section line vty   Verify VTY SSH configuration.
+show running-config | include username   Verify local user account.
+
+==================================================
+CONNECTIVITY TESTS
+==================================================
+
+Command                                  Explanation
+-------                                  ------------------------------
+ping 192.168.1.1                         Test connectivity to R1.
+ping 192.168.1.2                         Test connectivity to S1.
+
+telnet 192.168.1.2                       Should fail (Telnet disabled).
+
+ssh -l cisco 192.168.1.2                 Connect securely to Switch.
+Password: CCNA
+
+ssh -l cisco 192.168.1.1                 Connect securely to Router.
+Password: CCNA
+
+==================================================
+EXPECTED RESULT
+==================================================
+
+✓ Router and Switch are reachable via ping.
+
+✓ Telnet connections are rejected.
+
+✓ SSH Version 2 is enabled.
+
+✓ RSA encryption keys are generated.
+
+✓ Local username authentication is used.
+
+✓ Secure remote login succeeds using:
+
+Username : cisco
+Password : CCNA
