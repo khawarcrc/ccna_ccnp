@@ -1,0 +1,271 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 021 - Cisco CCNA Static Routing (Four Router Topology)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure a four-router enterprise network using static routing. Each
+router is connected to two neighboring routers through Serial (WAN)
+interfaces and to a local LAN through a GigabitEthernet interface.
+Assign IP addresses to all router interfaces, configure PC addressing,
+and manually create static routes so every LAN can communicate with
+every other LAN.
+
+==================================================
+LAB TOPOLOGY
+==================================================
+
+                    192.168.12.0/24
+             S0/0/0---------------S0/0/0
+                R1                 R2
+                |                   |
+                |                   |
+ 192.168.13.0   |                   |   192.168.24.0
+                |                   |
+                |                   |
+                R3-----------------R4
+             S0/0/1             S0/0/1
+                  192.168.34.0/24
+
+      |                 |                 |                 |
+     G0/0              G0/0              G0/0              G0/0
+      |                 |                 |                 |
+     SW1               SW2               SW3               SW4
+    /   \             /   \             /   \             /   \
+  PC1  PC2         PC3  PC4         PC5  PC6         PC7  PC8
+
+==================================================
+LAB THEORY
+==================================================
+
+Routers automatically learn only the networks directly connected to
+their interfaces. They have no knowledge of remote networks until a
+routing protocol or static routes are configured. In this lab we use
+static routing, where every remote network is manually configured with
+a destination network, subnet mask, and next-hop router. Once every
+router knows how to reach all remote networks, end-to-end connectivity
+is achieved across the entire topology.
+
+==================================================
+COMPLETE IP ADDRESSING TABLE
+==================================================
+
+--------------------------------------------------
+Router Interfaces
+--------------------------------------------------
+
+Device  Interface  Connected To  IP Address      Subnet Mask        Network
+------  ---------  ------------  --------------  -----------------  ----------------
+R1      S0/0/0     R2            192.168.12.1    255.255.255.0      192.168.12.0/24
+R1      S0/0/1     R3            192.168.13.1    255.255.255.0      192.168.13.0/24
+R1      G0/0       SW1           10.10.10.1      255.255.255.0      10.10.10.0/24
+
+R2      S0/0/0     R1            192.168.12.2    255.255.255.0      192.168.12.0/24
+R2      S0/0/1     R4            192.168.24.2    255.255.255.0      192.168.24.0/24
+R2      G0/0       SW2           10.20.20.1      255.255.255.0      10.20.20.0/24
+
+R3      S0/0/0     R1            192.168.13.3    255.255.255.0      192.168.13.0/24
+R3      S0/0/1     R4            192.168.34.3    255.255.255.0      192.168.34.0/24
+R3      G0/0       SW3           10.30.30.1      255.255.255.0      10.30.30.0/24
+
+R4      S0/0/0     R2            192.168.24.4    255.255.255.0      192.168.24.0/24
+R4      S0/0/1     R3            192.168.34.4    255.255.255.0      192.168.34.0/24
+R4      G0/0       SW4           10.40.40.1      255.255.255.0      10.40.40.0/24
+
+--------------------------------------------------
+Switch Management IPs (Optional)
+--------------------------------------------------
+
+Switch  VLAN    Management IP    Default Gateway
+------  ------  ---------------  ----------------
+SW1     VLAN1   10.10.10.2       10.10.10.1
+SW2     VLAN1   10.20.20.2       10.20.20.1
+SW3     VLAN1   10.30.30.2       10.30.30.1
+SW4     VLAN1   10.40.40.2       10.40.40.1
+
+--------------------------------------------------
+PC Addressing
+--------------------------------------------------
+
+LAN 1
+
+PC1    10.10.10.11    255.255.255.0    Gateway 10.10.10.1
+PC2    10.10.10.12    255.255.255.0    Gateway 10.10.10.1
+
+LAN 2
+
+PC3    10.20.20.11    255.255.255.0    Gateway 10.20.20.1
+PC4    10.20.20.12    255.255.255.0    Gateway 10.20.20.1
+
+LAN 3
+
+PC5    10.30.30.11    255.255.255.0    Gateway 10.30.30.1
+PC6    10.30.30.12    255.255.255.0    Gateway 10.30.30.1
+
+LAN 4
+
+PC7    10.40.40.11    255.255.255.0    Gateway 10.40.40.1
+PC8    10.40.40.12    255.255.255.0    Gateway 10.40.40.1
+
+==================================================
+CONFIGURATION COMMANDS
+==================================================
+
+--------------------------------------------------
+R1 CONFIGURATION
+--------------------------------------------------
+
+enable
+configure terminal
+
+hostname R1
+
+interface s0/0/0
+ ip address 192.168.12.1 255.255.255.0
+ no shutdown
+exit
+
+interface s0/0/1
+ ip address 192.168.13.1 255.255.255.0
+ no shutdown
+exit
+
+interface g0/0
+ ip address 10.10.10.1 255.255.255.0
+ no shutdown
+exit
+
+ip route 192.168.24.0 255.255.255.0 192.168.12.2
+ip route 192.168.34.0 255.255.255.0 192.168.13.3
+ip route 10.20.20.0 255.255.255.0 192.168.12.2
+ip route 10.30.30.0 255.255.255.0 192.168.13.3
+ip route 10.40.40.0 255.255.255.0 192.168.12.2
+
+end
+copy running-config startup-config
+
+--------------------------------------------------
+R2 CONFIGURATION
+--------------------------------------------------
+
+enable
+configure terminal
+
+hostname R2
+
+interface s0/0/0
+ ip address 192.168.12.2 255.255.255.0
+ no shutdown
+exit
+
+interface s0/0/1
+ ip address 192.168.24.2 255.255.255.0
+ no shutdown
+exit
+
+interface g0/0
+ ip address 10.20.20.1 255.255.255.0
+ no shutdown
+exit
+
+ip route 192.168.13.0 255.255.255.0 192.168.12.1
+ip route 192.168.34.0 255.255.255.0 192.168.24.4
+ip route 10.10.10.0 255.255.255.0 192.168.12.1
+ip route 10.30.30.0 255.255.255.0 192.168.12.1
+ip route 10.40.40.0 255.255.255.0 192.168.24.4
+
+end
+copy running-config startup-config
+
+--------------------------------------------------
+R3 CONFIGURATION
+--------------------------------------------------
+
+enable
+configure terminal
+
+hostname R3
+
+interface s0/0/0
+ ip address 192.168.13.3 255.255.255.0
+ no shutdown
+exit
+
+interface s0/0/1
+ ip address 192.168.34.3 255.255.255.0
+ no shutdown
+exit
+
+interface g0/0
+ ip address 10.30.30.1 255.255.255.0
+ no shutdown
+exit
+
+ip route 192.168.12.0 255.255.255.0 192.168.13.1
+ip route 192.168.24.0 255.255.255.0 192.168.34.4
+ip route 10.10.10.0 255.255.255.0 192.168.13.1
+ip route 10.20.20.0 255.255.255.0 192.168.13.1
+ip route 10.40.40.0 255.255.255.0 192.168.34.4
+
+end
+copy running-config startup-config
+
+--------------------------------------------------
+R4 CONFIGURATION
+--------------------------------------------------
+
+enable
+configure terminal
+
+hostname R4
+
+interface s0/0/0
+ ip address 192.168.24.4 255.255.255.0
+ no shutdown
+exit
+
+interface s0/0/1
+ ip address 192.168.34.4 255.255.255.0
+ no shutdown
+exit
+
+interface g0/0
+ ip address 10.40.40.1 255.255.255.0
+ no shutdown
+exit
+
+ip route 192.168.12.0 255.255.255.0 192.168.24.2
+ip route 192.168.13.0 255.255.255.0 192.168.34.3
+ip route 10.10.10.0 255.255.255.0 192.168.24.2
+ip route 10.20.20.0 255.255.255.0 192.168.24.2
+ip route 10.30.30.0 255.255.255.0 192.168.34.3
+
+end
+copy running-config startup-config
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+show ip interface brief
+show ip route
+show running-config
+
+ping 10.10.10.1
+ping 10.20.20.1
+ping 10.30.30.1
+ping 10.40.40.1
+
+==================================================
+EXPECTED RESULT
+==================================================
+
+Each router should display three directly connected (C) networks and
+five static (S) routes in the routing table. After configuring the IP
+addresses on all PCs, every PC should successfully communicate with
+every other PC across all four LANs through the manually configured
+static routes.
