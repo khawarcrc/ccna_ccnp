@@ -1,0 +1,268 @@
+================================================================================
+ LAB NAME: FREE CCNA Lab 030 - Numbered Extended ACLs (Access Control Lists Part 2)
+================================================================================
+ Source: Jeremy's IT Lab - FREE CCNA Packet Tracer Practice Lab
+ Topic: Configuring Numbered Extended Access Control Lists (ACLs)
+ Lab Type: Packet Tracer Practice Lab
+ Difficulty: Intermediate (CCNA level)
+ Previous Lab: Lab 029 - Numbered Standard ACLs
+================================================================================
+
+================================================================================
+ LAB THEORY / EXPLANATION
+================================================================================
+
+Extended Access Control Lists (ACLs) provide much more granular control than
+standard ACLs.
+
+STANDARD vs EXTENDED ACLs:
+- Standard ACLs (1-99):
+  - Match ONLY on SOURCE IP address
+  - Should be placed as close as possible to the DESTINATION
+- Extended ACLs (100-199):
+  - Can match on:
+    * Protocol (IP, TCP, UDP, ICMP, etc.)
+    * Source IP address
+    * Destination IP address
+    * Source/Destination port numbers (for TCP/UDP)
+  - Should be placed as close as possible to the SOURCE
+    (to drop unwanted traffic early and save bandwidth/resources)
+
+NUMBERED EXTENDED ACL SYNTAX:
+  access-list <100-199> {permit|deny} <protocol> <source> <destination> [operators]
+
+Common protocol options:
+  - ip     → matches any IP protocol (most common catch-all)
+  - tcp
+  - udp
+  - icmp
+  - etc.
+
+Source / Destination options:
+  - host <IP>                  → single host (same as <IP> 0.0.0.0)
+  - <network> <wildcard-mask>  → network range
+  - any                        → 0.0.0.0 255.255.255.255
+
+KEY RULES:
+1. ACLs are evaluated top-to-bottom. First match wins.
+2. There is always an implicit "deny ip any any" at the end of every ACL.
+3. If your requirements do NOT require denying all other traffic, you must
+   explicitly add a "permit ip any any" at the end to override the implicit deny.
+4. Order of statements is critical. More specific statements must come before
+   more general ones.
+
+PLACEMENT RULE (VERY IMPORTANT):
+  Extended ACLs → as close to the SOURCE as possible
+  Standard ACLs → as close to the DESTINATION as possible
+
+LAB OBJECTIVES / REQUIREMENTS:
+1. Only PC1 (192.168.1.11) should be able to access Server1 (192.168.3.100).
+   All other hosts must be denied access to Server1.
+2. Only hosts on the 192.168.2.0/24 network should be able to access
+   Server2 (192.168.3.101). All other hosts must be denied access to Server2.
+3. All other traffic (not going to Server1 or Server2) should be permitted.
+4. Achieve both requirements with a SINGLE extended ACL applied on one interface.
+
+================================================================================
+ NETWORK TOPOLOGY (ASCII DIAGRAM)
+================================================================================
+
+                    +-------------------+       +-------------------+
+                    |     Server1       |       |     Server2       |
+                    |  192.168.3.100/24  |       |  192.168.3.101/24  |
+                    +---------+---------+       +---------+---------+
+                              |                           |
+                              |                           |
+                              +-------------+-------------+
+                                            |
+                                     (Fa0/0 or similar)
+                                   +--------+--------+
+                                   |        R2       |
+                                   |                 |
+                                   | S2/0 or Fa0/1   |  <--- Link to R1
+                                   +--------+--------+
+                                            |
+                                            | Serial / FastEthernet link
+                                            | (192.168.0.0/24 or similar)
+                                   +--------+--------+
+                                   |        R1       |
+                                   |                 |
+                                   | S2/0  <--------- ACL applied here (out)
+                                   |                 |
+                                   | Fa0/0           | Fa1/0 (or Fa0/1)
+                                   +----+------+-----+
+                                        |      |
+                     +------------------+      +------------------+
+                     |                                        |
+            +--------+--------+                      +--------+--------+
+            |   192.168.1.0/24 |                      |  192.168.2.0/24  |
+            |                 |                      |                 |
+            |  PC1            |                      |  PC3 / PC4      |
+            |  192.168.1.11   |                      |  (hosts in      |
+            |                 |                      |   192.168.2.0/24)|
+            |  PC2 (other     |                      |                 |
+            |  host in same   |                      +-----------------+
+            |  subnet)        |
+            +-----------------+
+
+DETAILED ADDRESSING (reconstructed from transcript):
+
+  Device / Host          IP Address          Notes
+  ---------------------------------------------------------------
+  PC1                    192.168.1.11/24     Only host allowed to Server1
+  PC2                    192.168.1.x/24      Same subnet as PC1 (denied to both servers)
+  PC3 / PC4              192.168.2.x/24      Allowed only to Server2
+  Server1                192.168.3.100/24    Restricted to PC1 only
+  Server2                192.168.3.101/24    Restricted to 192.168.2.0/24 only
+  R1 S2/0                (toward R2)         ACL 100 applied outbound
+  R2                     Connected to both servers on 192.168.3.0/24
+
+Notes:
+- PC1 and PC2 are on the 192.168.1.0/24 network connected to R1.
+- PC3 and PC4 are on the 192.168.2.0/24 network connected to R1.
+- Both servers are on the 192.168.3.0/24 network connected to R2.
+- R1 and R2 are connected via a serial or FastEthernet link.
+- The single extended ACL is applied outbound on R1's S2/0 interface
+  (the interface facing toward R2 and the servers).
+
+================================================================================
+ IMPLEMENTATION - COMMANDS ON EACH DEVICE
+================================================================================
+
+--------------------------------------------------
+ DEVICE: R1  (Source side - Extended ACL placement)
+--------------------------------------------------
+Purpose: Single extended ACL that enforces both requirements.
+
+R1# enable
+R1# configure terminal
+
+! ========== Create Extended ACL 100 ==========
+
+! 1. Permit PC1 to Server1
+R1(config)# access-list 100 permit ip host 192.168.1.11 host 192.168.3.100
+
+! 2. Deny all other traffic to Server1
+R1(config)# access-list 100 deny ip any host 192.168.3.100
+
+! 3. Permit 192.168.2.0/24 to Server2
+R1(config)# access-list 100 permit ip 192.168.2.0 0.0.0.255 host 192.168.3.101
+
+! 4. Deny all other traffic to Server2
+R1(config)# access-list 100 deny ip any host 192.168.3.101
+
+! 5. Permit all other traffic (override implicit deny)
+R1(config)# access-list 100 permit ip any any
+
+! ========== Apply the ACL ==========
+! Applied outbound on the interface facing the servers (S2/0)
+R1(config)# interface Serial2/0
+R1(config-if)# ip access-group 100 out
+R1(config-if)# exit
+R1(config)# exit
+
+! Verification
+R1# show access-lists
+R1# show access-lists 100
+R1# show ip interface Serial2/0
+R1# show running-config | section access-list
+
+--------------------------------------------------
+ DEVICE: R2
+--------------------------------------------------
+No ACL configuration required on R2 in this lab.
+(The filtering is performed on R1 closer to the sources.)
+
+================================================================================
+ ACL LOGIC EXPLANATION (LINE BY LINE)
+================================================================================
+
+access-list 100 permit ip host 192.168.1.11 host 192.168.3.100
+  → Allows PC1 → Server1
+
+access-list 100 deny ip any host 192.168.3.100
+  → Blocks everyone else → Server1
+  (PC1 already matched the previous line, so it is not affected)
+
+access-list 100 permit ip 192.168.2.0 0.0.0.255 host 192.168.3.101
+  → Allows any host in 192.168.2.0/24 → Server2
+
+access-list 100 deny ip any host 192.168.3.101
+  → Blocks everyone else → Server2
+
+access-list 100 permit ip any any
+  → Allows all remaining traffic (any source to any destination)
+  → This is required because the lab does not want to block unrelated traffic.
+  → Without this line, the implicit "deny ip any any" would block everything else.
+
+================================================================================
+ WHY THIS PLACEMENT?
+================================================================================
+
+- Extended ACLs should be placed as close to the SOURCE as possible.
+- By applying the ACL outbound on R1's S2/0 (the interface leaving toward R2),
+  unwanted traffic is dropped before it crosses the link to R2.
+- A single ACL on one interface can enforce rules for multiple destinations
+  because extended ACLs can match both source and destination.
+
+================================================================================
+ VERIFICATION / TESTING STEPS
+================================================================================
+
+From PC1 (192.168.1.11):
+  PC1> ping 192.168.3.100     → SUCCESS (allowed to Server1)
+  PC1> ping 192.168.3.101     → FAIL    (denied to Server2)
+
+From PC2 (another host on 192.168.1.0/24):
+  PC2> ping 192.168.3.100     → FAIL    (denied to Server1)
+  PC2> ping 192.168.3.101     → FAIL    (denied to Server2)
+
+From PC3 or PC4 (hosts on 192.168.2.0/24):
+  PC3> ping 192.168.3.100     → FAIL    (denied to Server1)
+  PC3> ping 192.168.3.101     → SUCCESS (allowed to Server2)
+
+Useful verification commands on R1:
+  show access-lists 100
+  show ip interface Serial2/0          (look for "Outgoing access list is 100")
+  show running-config | include access-list
+  show running-config | section interface Serial2/0
+
+================================================================================
+ COMPLETE COMMAND SUMMARY (COPY-PASTE READY)
+================================================================================
+
+----- On R1 -----
+enable
+configure terminal
+access-list 100 permit ip host 192.168.1.11 host 192.168.3.100
+access-list 100 deny ip any host 192.168.3.100
+access-list 100 permit ip 192.168.2.0 0.0.0.255 host 192.168.3.101
+access-list 100 deny ip any host 192.168.3.101
+access-list 100 permit ip any any
+interface Serial2/0
+ ip access-group 100 out
+exit
+end
+write memory
+
+================================================================================
+ KEY TAKEAWAYS FOR THE EXAM
+================================================================================
+
+1. Extended ACL number range = 100–199 (and expanded 2000–2699)
+2. Extended ACLs can match protocol + source + destination (+ ports)
+3. Place extended ACLs close to the SOURCE
+4. Place standard ACLs close to the DESTINATION
+5. Always remember the implicit deny at the end
+6. Order of ACE (Access Control Entries) is critical
+7. Use "permit ip any any" when you need to allow traffic that is not
+   explicitly mentioned in the requirements
+
+================================================================================
+ END OF LAB FILE
+================================================================================
+ This lab file was created by analyzing the complete transcript of
+ Jeremy's IT Lab FREE CCNA Lab 030: Extended ACLs (Access Control Lists Part 2).
+ It contains the theory, topology reconstruction, full configuration commands,
+ design rationale, ACL logic explanation, and verification steps.
+================================================================================

@@ -1,0 +1,289 @@
+================================================================================
+ LAB NAME: FREE CCNA Lab 031 - Named Standard ACLs (Access Control Lists Part 3)
+================================================================================
+ Source: Jeremy's IT Lab - FREE CCNA Packet Tracer Practice Lab
+ Topic: Configuring Named Standard Access Control Lists (ACLs)
+ Lab Type: Packet Tracer Practice Lab
+ Difficulty: Intermediate (CCNA level)
+ Previous Labs: Lab 029 (Numbered Standard), Lab 030 (Numbered Extended)
+================================================================================
+
+================================================================================
+ LAB THEORY / EXPLANATION
+================================================================================
+
+This is the final lab in the ACL series that focuses exclusively on ACLs.
+In this lab we configure NAMED STANDARD ACLs.
+
+NUMBERED vs NAMED ACLs:
+- Numbered ACLs:
+  - Configured with the global command: access-list <number> ...
+  - Standard range: 1-99
+  - Extended range: 100-199
+- Named ACLs:
+  - Configured with: ip access-list {standard|extended} <name>
+  - Enter a separate configuration mode (ACL config mode)
+  - Entries are added with sub-commands (deny / permit)
+  - Names can be descriptive (e.g. 2-1, BLOCK_PC4, FROM_192_TO_SERVER)
+  - Easier to identify and manage in large configurations
+  - Can also be used to create numbered ACLs (optional)
+
+STANDARD ACLs (reminder):
+- Match traffic based ONLY on the SOURCE IP address
+- Should be placed as close as possible to the DESTINATION
+
+NAMED STANDARD ACL CONFIGURATION MODE:
+  Router(config)# ip access-list standard <NAME>
+  Router(config-std-nacl)# deny <source> [wildcard]
+  Router(config-std-nacl)# permit <source> [wildcard]
+  Router(config-std-nacl)# exit
+
+KEY POINTS:
+1. After entering named ACL mode you only configure the source (because it is standard).
+2. There is still an implicit "deny any" at the end of every ACL.
+3. Order of statements still matters (top to bottom, first match wins).
+4. You can use meaningful names such as "2-1" (meaning from 192.168.2.0 to 192.168.1.0).
+
+LAB OBJECTIVES / REQUIREMENTS:
+
+Requirement 1 (on R1):
+- Hosts in 192.168.1.0/24 and 192.168.2.0/24 should NOT be able to communicate
+  with each other.
+- Specifically:
+  - Block 192.168.2.0/24 from reaching 192.168.1.0/24
+  - Block 192.168.1.0/24 from reaching 192.168.2.0/24
+- ACLs are applied on R1's Fa0/0 and Fa1/0 interfaces (outbound).
+
+Requirement 2 (on R2):
+- Hosts in 192.168.2.0/24 should NOT be able to reach the servers
+  (192.168.3.0/24 network).
+- Apply the ACL as close as possible to the destination (on R2).
+
+================================================================================
+ NETWORK TOPOLOGY (ASCII DIAGRAM)
+================================================================================
+
+                    +-------------------+       +-------------------+
+                    |     Server1       |       |     Server2       |
+                    |  192.168.3.100/24  |       |  192.168.3.101/24  |
+                    +---------+---------+       +---------+---------+
+                              |                           |
+                              +-------------+-------------+
+                                            |
+                                     (Fa0/0)
+                                   +--------+--------+
+                                   |        R2       |
+                                   |                 |
+                                   | Fa0/0: to servers|
+                                   | Fa0/1 or S0/0   |  <--- to R1
+                                   +--------+--------+
+                                            |
+                                            | (link network, often 192.168.0.0/24)
+                                   +--------+--------+
+                                   |        R1       |
+                                   |                 |
+                                   | Fa0/0           | Fa1/0
+                                   +----+------+-----+
+                                        |      |
+                     +------------------+      +------------------+
+                     |                                        |
+            +--------+--------+                      +--------+--------+
+            | 192.168.1.0/24  |                      | 192.168.2.0/24  |
+            |                 |                      |                 |
+            | PC1 / PC3       |                      | PC2 / PC4       |
+            | 192.168.1.11    |                      | 192.168.2.x     |
+            | etc.            |                      |                 |
+            +-----------------+                      +-----------------+
+
+ADDRESSING SUMMARY (reconstructed from transcript):
+
+  Network / Host              IP / Subnet              Connected to
+  -----------------------------------------------------------------
+  192.168.1.0/24              PC1, PC3, etc.           R1 Fa0/0
+  192.168.2.0/24              PC2, PC4, etc.           R1 Fa1/0
+  192.168.3.0/24              Server1 (.100), Server2 (.101)  R2 Fa0/0
+  Link R1-R2                  192.168.0.0/24 (typical) R1 & R2
+
+ACL NAMES USED IN THE LAB:
+  - 2-1   : Blocks source 192.168.2.0/24  (applied out on Fa0/0 toward 1.0 network)
+  - 1-2   : Blocks source 192.168.1.0/24  (applied out on Fa1/0 toward 2.0 network)
+  - 2-3   : Blocks source 192.168.2.0/24  (applied out on R2 Fa0/0 toward servers)
+
+================================================================================
+ IMPLEMENTATION - COMMANDS ON EACH DEVICE
+================================================================================
+
+--------------------------------------------------
+ DEVICE: R1
+--------------------------------------------------
+Purpose:
+  - Prevent 192.168.2.0/24 from reaching 192.168.1.0/24
+  - Prevent 192.168.1.0/24 from reaching 192.168.2.0/24
+
+R1# enable
+R1# configure terminal
+
+! ===== ACL 2-1 : Block 192.168.2.0/24 from reaching 192.168.1.0/24 =====
+R1(config)# ip access-list standard 2-1
+R1(config-std-nacl)# deny 192.168.2.0 0.0.0.255
+R1(config-std-nacl)# permit any
+R1(config-std-nacl)# exit
+
+! ===== ACL 1-2 : Block 192.168.1.0/24 from reaching 192.168.2.0/24 =====
+R1(config)# ip access-list standard 1-2
+R1(config-std-nacl)# deny 192.168.1.0 0.0.0.255
+R1(config-std-nacl)# permit any
+R1(config-std-nacl)# exit
+
+! ===== Apply the ACLs =====
+! On Fa0/0 (facing 192.168.1.0/24) - block traffic coming from 2.0 network
+R1(config)# interface FastEthernet0/0
+R1(config-if)# ip access-group 2-1 out
+R1(config-if)# exit
+
+! On Fa1/0 (facing 192.168.2.0/24) - block traffic coming from 1.0 network
+R1(config)# interface FastEthernet1/0
+R1(config-if)# ip access-group 1-2 out
+R1(config-if)# exit
+
+R1(config)# exit
+
+! Verification
+R1# show access-lists
+R1# show ip interface FastEthernet0/0
+R1# show ip interface FastEthernet1/0
+
+--------------------------------------------------
+ DEVICE: R2
+--------------------------------------------------
+Purpose:
+  - Prevent hosts in 192.168.2.0/24 from reaching the servers (192.168.3.0/24)
+  - Place the ACL as close as possible to the destination (standard ACL rule)
+
+R2# enable
+R2# configure terminal
+
+! ===== ACL 2-3 : Block 192.168.2.0/24 from reaching servers =====
+R2(config)# ip access-list standard 2-3
+R2(config-std-nacl)# deny 192.168.2.0 0.0.0.255
+R2(config-std-nacl)# permit any
+R2(config-std-nacl)# exit
+
+! Apply outbound on the interface facing the servers
+R2(config)# interface FastEthernet0/0
+R2(config-if)# ip access-group 2-3 out
+R2(config-if)# exit
+
+R2(config)# exit
+
+! Verification
+R2# show access-lists
+R2# show ip interface FastEthernet0/0
+
+================================================================================
+ ACL LOGIC EXPLANATION
+================================================================================
+
+On R1 - ACL "2-1" (applied out Fa0/0):
+  deny 192.168.2.0 0.0.0.255   → Blocks any packet sourced from 192.168.2.0/24
+  permit any                   → Allows all other sources
+  (Applied outbound toward the 192.168.1.0/24 network)
+
+On R1 - ACL "1-2" (applied out Fa1/0):
+  deny 192.168.1.0 0.0.0.255   → Blocks any packet sourced from 192.168.1.0/24
+  permit any                   → Allows all other sources
+  (Applied outbound toward the 192.168.2.0/24 network)
+
+On R2 - ACL "2-3" (applied out Fa0/0):
+  deny 192.168.2.0 0.0.0.255   → Blocks any packet sourced from 192.168.2.0/24
+  permit any                   → Allows all other sources
+  (Applied outbound toward the servers)
+
+================================================================================
+ VERIFICATION / TESTING STEPS
+================================================================================
+
+Test Requirement 1 (R1 ACLs):
+  From PC1 (192.168.1.x) → PC2 / PC4 (192.168.2.x)
+    Expected: Destination host unreachable
+
+  From PC3 (192.168.1.x) → PC2 / PC4
+    Expected: Destination host unreachable
+
+  From PC2 / PC4 (192.168.2.x) → PC1 / PC3
+    Expected: Destination host unreachable
+
+Test Requirement 2 (R2 ACL):
+  From PC3 or any host in 192.168.2.0/24:
+    ping 192.168.3.100 (Server1)  → Destination host unreachable
+    ping 192.168.3.101 (Server2)  → Destination host unreachable
+
+  From hosts in 192.168.1.0/24:
+    Should still be able to reach the servers (not blocked by ACL 2-3)
+
+Useful show commands:
+  show access-lists
+  show access-lists 2-1
+  show access-lists 1-2
+  show access-lists 2-3
+  show ip interface brief
+  show ip interface Fa0/0
+  show running-config | section access-list
+
+================================================================================
+ COMPLETE COMMAND SUMMARY (COPY-PASTE READY)
+================================================================================
+
+----- On R1 -----
+enable
+configure terminal
+ip access-list standard 2-1
+ deny 192.168.2.0 0.0.0.255
+ permit any
+ exit
+ip access-list standard 1-2
+ deny 192.168.1.0 0.0.0.255
+ permit any
+ exit
+interface FastEthernet0/0
+ ip access-group 2-1 out
+ exit
+interface FastEthernet1/0
+ ip access-group 1-2 out
+ exit
+end
+write memory
+
+----- On R2 -----
+enable
+configure terminal
+ip access-list standard 2-3
+ deny 192.168.2.0 0.0.0.255
+ permit any
+ exit
+interface FastEthernet0/0
+ ip access-group 2-3 out
+ exit
+end
+write memory
+
+================================================================================
+ KEY TAKEAWAYS FOR THE EXAM
+================================================================================
+
+1. Named ACLs use: ip access-list standard <NAME>
+2. You enter a sub-configuration mode to add deny/permit statements
+3. Named ACLs are still standard or extended – the matching rules do not change
+4. Names make ACLs much easier to identify in the running-config
+5. Standard ACLs (named or numbered) are placed close to the destination
+6. Always remember the implicit deny any at the end
+7. You can create numbered ACLs using the named ACL syntax if you wish
+
+================================================================================
+ END OF LAB FILE
+================================================================================
+ This lab file was created by analyzing the complete transcript of
+ Jeremy's IT Lab FREE CCNA Lab 031: Named ACLs (Access Control Lists Part 3).
+ It contains the theory, topology reconstruction, full configuration commands,
+ design rationale, and verification steps.
+================================================================================
