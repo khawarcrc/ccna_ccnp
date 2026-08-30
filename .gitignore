@@ -1,0 +1,16 @@
+# Ignore Markdown files and directories
+md-files/
+*.md
+
+# Ignore Video directories and large media/archive files
+video/
+videos/
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.wmv
+*.flv
+*.webm
+*.zip
+*.rar
