@@ -1,0 +1,255 @@
+==================================================
+LAB NAME
+==================================================
+Lab 022 - Cisco CCNA RIP Routing (Four Router Topology)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+Configure a four-router enterprise network using the RIP routing protocol (RIPv2). 
+Each router is connected to two neighboring routers through GigabitEthernet (LAN/WAN) 
+interfaces and to a local LAN through a GigabitEthernet interface. Assign IP addresses 
+to all router interfaces, configure PC addressing, and enable RIPv2 so that every LAN 
+can communicate with every other LAN dynamically.
+
+==================================================
+LAB TOPOLOGY
+==================================================
+
+                    192.168.12.0/24
+              G0/1-----------------G0/1
+                R1                   R2
+                 |                   |
+                 |                   |
+         192.168.13.0             192.168.24.0
+                 |                   |
+                 |                   |
+                R3-----------------R4
+              G0/2               G0/2
+                    192.168.34.0/24
+
+                 |                   |                   |                   |
+               G0/0                G0/0                G0/0                G0/0
+                 |                   |                   |                   |
+               SW1                 SW2                 SW3                 SW4
+               / \                 / \                 / \                 / \
+             PC1 PC2             PC3 PC4             PC5 PC6             PC7 PC8
+
+==================================================
+LAB THEORY
+==================================================
+Routers automatically learn only the networks directly connected to their interfaces. 
+They have no knowledge of remote networks until a routing protocol or static routes 
+are configured. 
+
+In this lab we use RIPv2 (Routing Information Protocol version 2). RIPv2 is a distance-vector 
+routing protocol that uses hop count as its metric (maximum 15 hops). It supports classless 
+routing (VLSM/CIDR), sends updates as multicast (224.0.0.9), and includes the subnet mask 
+in updates. 
+
+Once RIPv2 is enabled and the directly connected networks are advertised with the network 
+command, every router will dynamically learn all remote networks and end-to-end connectivity 
+will be achieved across the entire topology.
+
+==================================================
+COMPLETE IP ADDRESSING TABLE
+==================================================
+
+--------------------------------------------------
+Router Interfaces
+--------------------------------------------------
+Device   Interface   Connected To   IP Address      Subnet Mask       Network
+------   ---------   ------------   --------------  ----------------- ----------------
+R1       G0/1        R2             192.168.12.1    255.255.255.0     192.168.12.0/24
+R1       G0/2        R3             192.168.13.1    255.255.255.0     192.168.13.0/24
+R1       G0/0        SW1            10.10.10.1      255.255.255.0     10.10.10.0/24
+
+R2       G0/1        R1             192.168.12.2    255.255.255.0     192.168.12.0/24
+R2       G0/2        R4             192.168.24.2    255.255.255.0     192.168.24.0/24
+R2       G0/0        SW2            10.20.20.1      255.255.255.0     10.20.20.0/24
+
+R3       G0/1        R1             192.168.13.3    255.255.255.0     192.168.13.0/24
+R3       G0/2        R4             192.168.34.3    255.255.255.0     192.168.34.0/24
+R3       G0/0        SW3            10.30.30.1      255.255.255.0     10.30.30.0/24
+
+R4       G0/1        R2             192.168.24.4    255.255.255.0     192.168.24.0/24
+R4       G0/2        R3             192.168.34.4    255.255.255.0     192.168.34.0/24
+R4       G0/0        SW4            10.40.40.1      255.255.255.0     10.40.40.0/24
+
+--------------------------------------------------
+Switch Management IPs (Optional)
+--------------------------------------------------
+Switch   VLAN   Management IP   Default Gateway
+------   ----   -------------   ---------------
+SW1      VLAN1  10.10.10.2      10.10.10.1
+SW2      VLAN1  10.20.20.2      10.20.20.1
+SW3      VLAN1  10.30.30.2      10.30.30.1
+SW4      VLAN1  10.40.40.2      10.40.40.1
+
+--------------------------------------------------
+PC Addressing
+--------------------------------------------------
+LAN 1
+PC1   10.10.10.11   255.255.255.0   Gateway 10.10.10.1
+PC2   10.10.10.12   255.255.255.0   Gateway 10.10.10.1
+
+LAN 2
+PC3   10.20.20.11   255.255.255.0   Gateway 10.20.20.1
+PC4   10.20.20.12   255.255.255.0   Gateway 10.20.20.1
+
+LAN 3
+PC5   10.30.30.11   255.255.255.0   Gateway 10.30.30.1
+PC6   10.30.30.12   255.255.255.0   Gateway 10.30.30.1
+
+LAN 4
+PC7   10.40.40.11   255.255.255.0   Gateway 10.40.40.1
+PC8   10.40.40.12   255.255.255.0   Gateway 10.40.40.1
+
+==================================================
+CONFIGURATION COMMANDS
+==================================================
+
+--------------------------------------------------
+R1 CONFIGURATION
+--------------------------------------------------
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter privileged EXEC mode.
+configure terminal                           Enter global configuration mode.
+hostname R1                                  Assign the hostname R1 to the router.
+interface g0/1                               Enter interface configuration mode for GigabitEthernet0/1.
+ip address 192.168.12.1 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/2                               Enter interface configuration mode for GigabitEthernet0/2.
+ip address 192.168.13.1 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/0                               Enter interface configuration mode for GigabitEthernet0/0.
+ip address 10.10.10.1 255.255.255.0          Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+router rip                                   Enter RIP routing process configuration mode.
+version 2                                    Set RIP to version 2 (classless, multicast updates).
+network 192.168.12.0                         Advertise the 192.168.12.0 network into RIP.
+network 192.168.13.0                         Advertise the 192.168.13.0 network into RIP.
+network 10.10.10.0                           Advertise the 10.10.10.0 network into RIP.
+no auto-summary                              Disable automatic route summarization (keep classless).
+exit                                         Exit RIP configuration mode.
+end                                          Return to privileged EXEC mode.
+copy running-config startup-config           Save the running configuration to NVRAM.
+
+--------------------------------------------------
+R2 CONFIGURATION
+--------------------------------------------------
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter privileged EXEC mode.
+configure terminal                           Enter global configuration mode.
+hostname R2                                  Assign the hostname R2 to the router.
+interface g0/1                               Enter interface configuration mode for GigabitEthernet0/1.
+ip address 192.168.12.2 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/2                               Enter interface configuration mode for GigabitEthernet0/2.
+ip address 192.168.24.2 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/0                               Enter interface configuration mode for GigabitEthernet0/0.
+ip address 10.20.20.1 255.255.255.0          Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+router rip                                   Enter RIP routing process configuration mode.
+version 2                                    Set RIP to version 2 (classless, multicast updates).
+network 192.168.12.0                         Advertise the 192.168.12.0 network into RIP.
+network 192.168.24.0                         Advertise the 192.168.24.0 network into RIP.
+network 10.20.20.0                           Advertise the 10.20.20.0 network into RIP.
+no auto-summary                              Disable automatic route summarization (keep classless).
+exit                                         Exit RIP configuration mode.
+end                                          Return to privileged EXEC mode.
+copy running-config startup-config           Save the running configuration to NVRAM.
+
+--------------------------------------------------
+R3 CONFIGURATION
+--------------------------------------------------
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter privileged EXEC mode.
+configure terminal                           Enter global configuration mode.
+hostname R3                                  Assign the hostname R3 to the router.
+interface g0/1                               Enter interface configuration mode for GigabitEthernet0/1.
+ip address 192.168.13.3 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/2                               Enter interface configuration mode for GigabitEthernet0/2.
+ip address 192.168.34.3 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/0                               Enter interface configuration mode for GigabitEthernet0/0.
+ip address 10.30.30.1 255.255.255.0          Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+router rip                                   Enter RIP routing process configuration mode.
+version 2                                    Set RIP to version 2 (classless, multicast updates).
+network 192.168.13.0                         Advertise the 192.168.13.0 network into RIP.
+network 192.168.34.0                         Advertise the 192.168.34.0 network into RIP.
+network 10.30.30.0                           Advertise the 10.30.30.0 network into RIP.
+no auto-summary                              Disable automatic route summarization (keep classless).
+exit                                         Exit RIP configuration mode.
+end                                          Return to privileged EXEC mode.
+copy running-config startup-config           Save the running configuration to NVRAM.
+
+--------------------------------------------------
+R4 CONFIGURATION
+--------------------------------------------------
+Command                                      Explanation
+-------------------------------------------  -----------------------------------------------
+enable                                       Enter privileged EXEC mode.
+configure terminal                           Enter global configuration mode.
+hostname R4                                  Assign the hostname R4 to the router.
+interface g0/1                               Enter interface configuration mode for GigabitEthernet0/1.
+ip address 192.168.24.4 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/2                               Enter interface configuration mode for GigabitEthernet0/2.
+ip address 192.168.34.4 255.255.255.0        Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+interface g0/0                               Enter interface configuration mode for GigabitEthernet0/0.
+ip address 10.40.40.1 255.255.255.0          Assign IP address and subnet mask to the interface.
+no shutdown                                  Administratively enable the interface.
+exit                                         Exit interface configuration mode.
+router rip                                   Enter RIP routing process configuration mode.
+version 2                                    Set RIP to version 2 (classless, multicast updates).
+network 192.168.24.0                         Advertise the 192.168.24.0 network into RIP.
+network 192.168.34.0                         Advertise the 192.168.34.0 network into RIP.
+network 10.40.40.0                           Advertise the 10.40.40.0 network into RIP.
+no auto-summary                              Disable automatic route summarization (keep classless).
+exit                                         Exit RIP configuration mode.
+end                                          Return to privileged EXEC mode.
+copy running-config startup-config           Save the running configuration to NVRAM.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+show ip interface brief
+show ip route
+show ip protocols
+show ip rip database
+show running-config
+ping 10.10.10.1
+ping 10.20.20.1
+ping 10.30.30.1
+ping 10.40.40.1
+
+==================================================
+EXPECTED RESULT
+==================================================
+Each router should display three directly connected (C) networks and five RIP (R) routes 
+in the routing table (learned via RIPv2). 
+
+After configuring the IP addresses on all PCs, every PC should successfully communicate 
+with every other PC across all four LANs through the dynamically exchanged RIPv2 routes.
+
+The command "show ip protocols" should confirm that RIPv2 is running, auto-summary is disabled, 
+and the correct networks are being advertised.

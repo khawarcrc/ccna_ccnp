@@ -1,0 +1,258 @@
+================================================================================
+ LAB NAME: FREE CCNA Lab 029 - Numbered Standard ACLs (Access Control Lists Part 1)
+================================================================================
+ Source: Jeremy's IT Lab - FREE CCNA Packet Tracer Practice Lab
+ Topic: Configuring Numbered Standard Access Control Lists (ACLs)
+ Lab Type: Packet Tracer Practice Lab
+ Difficulty: Beginner / Intermediate (CCNA level)
+================================================================================
+
+================================================================================
+ LAB THEORY / EXPLANATION
+================================================================================
+
+Access Control Lists (ACLs) are used to filter traffic in a network. They act
+as a packet filter that permits or denies traffic based on matching criteria.
+
+TYPES OF ACLs:
+- Standard ACLs: Match based ONLY on the SOURCE IP address.
+  Number range: 1 - 99 (and expanded 1300 - 1999)
+- Extended ACLs: Match based on source AND destination IP address, protocol,
+  port numbers, etc.
+  Number range: 100 - 199 (and expanded 2000 - 2699)
+
+NUMBERED vs NAMED:
+- Numbered ACLs: Identified by a number (e.g., access-list 1 ...)
+- Named ACLs: Identified by a name (e.g., ip access-list standard BLOCK_PC4)
+
+KEY RULES FOR STANDARD ACLs:
+1. Standard ACLs should be placed as CLOSE TO THE DESTINATION as possible.
+   Reason: Because they only look at the source address, placing them near
+   the source can unintentionally block legitimate traffic to other destinations.
+2. ACLs are processed TOP TO BOTTOM (sequential order). First match wins.
+3. Every ACL has an IMPLICIT "deny any" at the end. Traffic that does not
+   match any explicit permit/deny statement is denied.
+4. Wildcard masks are used (inverse of subnet masks).
+   Example: /24 subnet mask 255.255.255.0 → Wildcard mask 0.0.0.255
+
+WILDCARD MASK QUICK REFERENCE:
+  Subnet Mask          Wildcard Mask
+  255.255.255.0   →    0.0.0.255     (/24)
+  255.255.255.255 →    0.0.0.0       (host)
+  0.0.0.0         →    255.255.255.255 (any)
+
+APPLYING AN ACL TO AN INTERFACE:
+  ip access-group <number|name> {in | out}
+  - in  = filter traffic entering the interface
+  - out = filter traffic leaving the interface
+
+LAB OBJECTIVES / REQUIREMENTS:
+1. Only the 192.168.1.0/24 network should be able to access Server1
+   (192.168.3.100). All other networks should be denied access to Server1.
+2. PC4 (192.168.2.14) should NOT be able to communicate with the
+   192.168.1.0/24 network. All other traffic should be allowed.
+
+================================================================================
+ NETWORK TOPOLOGY (ASCII DIAGRAM)
+================================================================================
+
+                          +-------------------+
+                          |     Server1       |
+                          |  192.168.3.100/24 |
+                          +---------+---------+
+                                    |
+                                    | (Fa0/0)
+                          +---------+---------+
+                          |        R2         |
+                          |                   |
+                          | Fa0/0: 192.168.3.1|
+                          | Fa0/1: 192.168.0.2| <--- Link between R1-R2
+                          +---------+---------+
+                                    |
+                                    | (Fa0/1 on R2 / Fa0/1 on R1)
+                          +---------+---------+
+                          |        R1         |
+                          |                   |
+                          | Fa0/0: 192.168.1.1| -----> 192.168.1.0/24 LAN
+                          | Fa0/1: 192.168.0.1|
+                          | Fa1/0: 192.168.2.1| -----> 192.168.2.0/24 LAN
+                          +----+------+-------+
+                               |      |
+              +----------------+      +----------------+
+              |                                    |
+     +--------+--------+                  +--------+--------+
+     |      PC1        |                  |      PC3        |
+     | 192.168.1.11/24 |                  | 192.168.0.x/24  |
+     | Gateway: .1     |                  | (on 192.168.0   |
+     +-----------------+                  |  network or via |
+                                          |  R1 Fa0/1 side) |
+                                          +-----------------+
+
+     +-----------------+
+     |      PC4        |
+     | 192.168.2.14/24 |
+     | Gateway: .1     |
+     +-----------------+
+
+NOTES ON TOPOLOGY (reconstructed from lab transcript):
+- R1 and R2 are connected via a point-to-point link in the 192.168.0.0/24 range
+  (R1 Fa0/1 = 192.168.0.1, R2 Fa0/1 = 192.168.0.2).
+- 192.168.1.0/24 is connected to R1 Fa0/0 (PC1 = 192.168.1.11).
+- 192.168.2.0/24 is connected to R1 Fa1/0 (PC4 = 192.168.2.14).
+- Server1 (192.168.3.100) is connected to R2 Fa0/0.
+- PC3 is on the 192.168.0.0/24 network (used for testing denial to Server1).
+- Switches may exist between routers and PCs but are not relevant for ACL config.
+
+IP ADDRESSING SUMMARY:
+  Device / Interface          IP Address          Subnet
+  ---------------------------------------------------------------
+  R1 Fa0/0                    192.168.1.1/24      192.168.1.0/24
+  R1 Fa0/1                    192.168.0.1/24      192.168.0.0/24 (to R2)
+  R1 Fa1/0                    192.168.2.1/24      192.168.2.0/24
+  R2 Fa0/0                    192.168.3.1/24      192.168.3.0/24
+  R2 Fa0/1                    192.168.0.2/24      192.168.0.0/24 (to R1)
+  PC1                         192.168.1.11/24
+  PC4                         192.168.2.14/24
+  PC3                         192.168.0.x/24      (on the link network)
+  Server1                     192.168.3.100/24
+
+================================================================================
+ IMPLEMENTATION - COMMANDS ON EACH DEVICE
+================================================================================
+
+--------------------------------------------------
+ DEVICE: R2  (Closest to Server1 - Destination)
+--------------------------------------------------
+Purpose: Permit only 192.168.1.0/24 to reach Server1.
+Place ACL outbound on Fa0/0 (towards Server1).
+
+R2# enable
+R2# configure terminal
+
+! Create numbered standard ACL 1
+R2(config)# access-list 1 permit 192.168.1.0 0.0.0.255
+! Implicit deny any is automatically present at the end
+
+! Apply the ACL outbound on the interface facing Server1
+R2(config)# interface FastEthernet0/0
+R2(config-if)# ip access-group 1 out
+R2(config-if)# exit
+R2(config)# exit
+
+! Verification
+R2# show access-lists
+R2# show ip interface FastEthernet0/0
+
+--------------------------------------------------
+ DEVICE: R1  (Closest to 192.168.1.0/24 destination for 2nd requirement)
+--------------------------------------------------
+Purpose: Deny PC4 (192.168.2.14) from reaching 192.168.1.0/24.
+         Permit all other traffic.
+Place ACL outbound on Fa0/0 (towards the 192.168.1.0/24 LAN).
+
+R1# enable
+R1# configure terminal
+
+! Create numbered standard ACL 1
+R1(config)# access-list 1 deny host 192.168.2.14
+! or equivalently: access-list 1 deny 192.168.2.14 0.0.0.0
+R1(config)# access-list 1 permit any
+! Implicit deny any still exists but is never reached because of "permit any"
+
+! Apply the ACL outbound on the interface facing 192.168.1.0/24
+R1(config)# interface FastEthernet0/0
+R1(config-if)# ip access-group 1 out
+R1(config-if)# exit
+R1(config)# exit
+
+! Verification
+R1# show access-lists
+R1# show ip interface FastEthernet0/0
+
+================================================================================
+ IMPORTANT DESIGN NOTES (from the lab)
+================================================================================
+
+1. Why configure the first ACL on R2 (not R1)?
+   - Standard ACLs filter only on source address.
+   - Placing the ACL near the source (R1) could block the 192.168.1.0/24 network
+     from reaching OTHER destinations unnecessarily.
+   - Best practice: Place standard ACLs as close to the DESTINATION as possible.
+
+2. Why "out" on Fa0/0 of R2?
+   - We want to filter traffic that is LEAVING R2 towards Server1.
+   - Traffic coming IN on Fa0/0 is from Server1 (we do not want to filter that).
+
+3. Why not apply the second ACL inbound on R1 Fa1/0?
+   - If applied inbound on Fa1/0 (PC4's network interface), it would block PC4
+     from reaching ANY network outside its own subnet (not just 192.168.1.0/24).
+   - Applying outbound on Fa0/0 only affects traffic going to the 192.168.1.0/24
+     network, which is exactly what is required.
+
+4. Order of statements matters:
+   - Deny specific host first, then permit any.
+   - If "permit any" was placed first, the deny would never be evaluated.
+
+================================================================================
+ VERIFICATION / TESTING STEPS
+================================================================================
+
+Test 1 - Requirement 1 (Only 192.168.1.0/24 can reach Server1):
+  From PC1 (192.168.1.11):
+    PC1> ping 192.168.3.100
+    Expected: Success (!!!!!)
+
+  From PC3 (on 192.168.0.0/24):
+    PC3> ping 192.168.3.100
+    Expected: Destination host unreachable (from R2)
+
+Test 2 - Requirement 2 (PC4 cannot reach 192.168.1.0/24):
+  From PC3 (or any other host):
+    ping 192.168.1.11
+    Expected: Success
+
+  From PC4 (192.168.2.14):
+    PC4> ping 192.168.1.11
+    Expected: Destination host unreachable (from R1)
+
+Useful show commands:
+  show access-lists
+  show access-lists 1
+  show ip interface brief
+  show ip interface Fa0/0   (look for "Outgoing access list is 1")
+  show running-config | section access-list
+  show running-config | section interface
+
+================================================================================
+ COMPLETE COMMAND SUMMARY (COPY-PASTE READY)
+================================================================================
+
+----- On R2 -----
+enable
+configure terminal
+access-list 1 permit 192.168.1.0 0.0.0.255
+interface FastEthernet0/0
+ ip access-group 1 out
+exit
+end
+write memory
+
+----- On R1 -----
+enable
+configure terminal
+access-list 1 deny host 192.168.2.14
+access-list 1 permit any
+interface FastEthernet0/0
+ ip access-group 1 out
+exit
+end
+write memory
+
+================================================================================
+ END OF LAB FILE
+================================================================================
+ This lab file was created by analyzing the complete transcript of
+ Jeremy's IT Lab FREE CCNA Lab 029: Standard ACLs (Access Control Lists Part 1).
+ It contains the theory, topology reconstruction, full configuration commands,
+ design rationale, and verification steps.
+================================================================================
