@@ -1,0 +1,108 @@
+================================================================================
+                    CCNA PACKET TRACER LAB: NTP WITH AUTHENTICATION
+================================================================================
+
+LAB PURPOSE
+-----------
+Configure NTP (Network Time Protocol) with MD5 authentication on Cisco routers.
+Ensure routers R2 and R3 only synchronize their clocks with a trusted time
+source (R1), preventing unauthorized or erroneous time information from
+propagating through the network.
+
+================================================================================
+
+LAB WORKING EXPLANATION & KEY POINTS
+------------------------------------
+
+TOPOLOGY OVERVIEW:
+- R1  = NTP Server (Master) with default stratum level 8
+- R2  = NTP Client, connects to R1 using authentication key 1
+- R3  = NTP Client, connects to R1 using authentication key 2
+
+HOW IT WORKS:
+1. R1 is configured as the NTP master. It generates time using its own local
+   clock (reference shows as loopback 127.127.1.1).
+
+2. Authentication is enabled globally with "ntp authenticate". This forces
+   clients to present a valid key before time sync is accepted.
+
+3. The server creates two MD5 authentication keys:
+      - Key 1 (Cisco1) for R2
+      - Key 2 (Cisco2) for R3
+   Both keys are marked as "trusted" on R1.
+
+4. Each client is configured with its matching key and points to R1's IP
+   address using "ntp server <ip> key <number>".
+
+5. NTP synchronizes UTC time ONLY. Each router must configure its own local
+   timezone display using "clock timezone". In this lab, JST (Japan Standard
+   Time) = UTC +9 hours.
+
+6. When manually setting the clock, you must subtract the timezone offset.
+   Example: To display 9:00 PM JST, set the clock to 12:00 PM UTC.
+
+7. NTP synchronization is NOT instant. It can take several minutes for the
+   routers to fully sync. Be patient.
+
+VERIFICATION INDICATORS:
+- * (asterisk)  = Router is currently synchronized to this peer
+- ~ (tilde)     = Association is manually configured
+- Stratum 8     = Distance from reference clock (R1 is the source)
+
+IMPORTANT NOTES:
+- The authentication key, trusted-key number, and server key number must ALL
+  match between server and client.
+- You can use a single key for multiple clients, but this lab uses two
+  separate keys as per instructions.
+- R1's reference clock appears as 127.127.1.1 (local loopback clock).
+
+================================================================================
+
+COMMANDS
+--------
+
+--- R1: NTP SERVER (MASTER) ---
+enable
+configure terminal
+clock set 12:00:00 22 August 2019
+clock timezone JST 9
+ntp master
+ntp authenticate
+ntp authentication-key 1 md5 Cisco1
+ntp authentication-key 2 md5 Cisco2
+ntp trusted-key 1
+ntp trusted-key 2
+
+--- R2: NTP CLIENT ---
+enable
+configure terminal
+clock timezone JST 9
+ntp authenticate
+ntp authentication-key 1 md5 Cisco1
+ntp trusted-key 1
+ntp server 192.168.12.1 key 1
+
+--- R3: NTP CLIENT ---
+enable
+configure terminal
+clock timezone JST 9
+ntp authenticate
+ntp authentication-key 2 md5 Cisco2
+ntp trusted-key 2
+ntp server 192.168.13.1 key 2
+
+--- VERIFICATION COMMANDS ---
+show clock detail
+show ntp associations
+show ntp status
+
+================================================================================
+
+QUICK REFERENCE: NTP AUTHENTICATION WORKFLOW
+--------------------------------------------
+Step 1:  ntp authenticate              --> Enable authentication globally
+Step 2:  ntp authentication-key # md5  --> Define the MD5 key
+Step 3:  ntp trusted-key #             --> Mark the key as trusted
+Step 4:  ntp server <IP> key #         --> Client points to server with key
+Step 5:  show ntp associations         --> Verify synchronization status
+================================================================================
