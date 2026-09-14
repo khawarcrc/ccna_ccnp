@@ -1,0 +1,198 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 034 - LLDP (Link Layer Discovery Protocol)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn how LLDP (Link Layer Discovery Protocol), an open industry-standard
+neighbour discovery protocol, discovers directly connected devices across
+vendors, compare it to Cisco's proprietary CDP, examine its default timers,
+and configure interface-level control over LLDP transmission/reception.
+
+==================================================
+TOPOLOGY
+==================================================
+
+SW1 ---- R1 ---- R2 ---- SW2
+                            |
+                           PC1
+
+SW1  Gi1/0/1  ----  Gi0/0  R1
+R1   Gi0/1    ----  Gi0/0  R2
+R2   Gi0/1    ----  Gi0/1  SW2
+SW2  Fa0/1    ----          PC1
+
+==================================================
+BACKGROUND
+==================================================
+
+CDP (Cisco Discovery Protocol) is Cisco-proprietary and only works between
+Cisco devices. LLDP is an open standard and works across Cisco and
+non-Cisco devices alike. All four devices in this lab are Cisco devices
+and have CDP enabled by default, so the first task is to disable CDP and
+enable LLDP everywhere.
+
+==================================================
+CONFIGURATION COMMANDS
+==================================================
+
+---------------- SW1 / R1 / R2 / SW2 (same on all four) ----------------
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+enable                                   Enter Privileged EXEC mode.
+configure terminal                       Enter Global Configuration mode.
+no cdp run                               Disable CDP globally on the device.
+lldp run                                 Enable LLDP globally on the device.
+exit                                     Return to Privileged EXEC mode.
+
+Repeat identically on SW1, R1, R2, and SW2.
+
+==================================================
+VERIFY DEFAULT LLDP TIMERS
+==================================================
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+show lldp                                Displays LLDP global status and default timers.
+
+Result (on SW1):
+- Status                    : Active
+- Advertisement (hello) timer : 30 seconds
+- Hold timer                  : 120 seconds
+- Re-initialization delay     : 2 seconds
+
+(Worth memorizing the advertisement and hold timer values for the exam.)
+
+==================================================
+IDENTIFY NEIGHBOURS VIA LLDP
+==================================================
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+show lldp neighbors                      Displays directly connected LLDP neighbours,
+                                          local interface, and remote (neighbour) interface.
+
+Results per device:
+
+SW1  show lldp neighbors
+  Neighbour: R1  |  Local interface: Gi1/0/1  |  Port ID (R1's interface): Gi0/0
+
+R1   show lldp neighbors
+  Neighbour: SW1 |  Gi0/0 -> SW1's Gi1/0/1 (confirms SW1 result above)
+  Neighbour: R2  |  Gi0/1 -> R2's Gi0/0
+
+R2   show lldp neighbors
+  Neighbour: R1  |  Gi0/0 -> R1's Gi0/1 (confirms R1 result above)
+  Neighbour: SW2 |  Gi0/1 -> SW2's Gi0/1
+
+SW2  show lldp neighbors
+  Neighbour: R2  |  Gi0/1 -> R2's Gi0/1 (confirms R2 result above)
+
+==================================================
+IDENTIFY NEIGHBOUR IOS VERSION VIA LLDP
+==================================================
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+show lldp neighbors detail               Displays detailed neighbour info, including
+                                          platform and software (IOS) version.
+
+Results:
+
+On SW2  show lldp neighbors detail
+  R2 : Cisco 2900 series, IOS software version 15.1(4)M4
+
+On R2   show lldp neighbors detail
+  SW2 : Cisco Catalyst 3560, IOS software version 12.2(SE) [auto-caption unclear,
+        verify exact train/release from the live device]
+  R1  : Cisco 2900 series, IOS software version 15.1(4)M4 (confirms SW2 result above)
+
+On R1   show lldp neighbors detail
+  SW1 : Catalyst Layer 3 switch, IOS software version 16.3.2
+
+==================================================
+RESTRICT LLDP ON AN ACCESS PORT
+==================================================
+
+Task: prevent SW2's Fa0/1 interface (connected to PC1) from sending or
+receiving LLDP updates.
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+configure terminal                       Enter Global Configuration mode.
+interface fastethernet0/1                Enter the interface connected to PC1.
+no lldp receive                          Disable LLDP reception on this interface.
+no lldp transmit                         Disable LLDP transmission on this interface.
+end                                      Return to Privileged EXEC mode.
+
+Note: CDP uses a single command (`cdp enable` / `no cdp enable`) to control
+both directions at once. LLDP requires two separate commands — `lldp
+receive` and `lldp transmit` — to control reception and transmission
+independently.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+show lldp                                Verify global LLDP status and default timers.
+show lldp neighbors                      Verify discovered neighbours and interfaces.
+show lldp neighbors detail               Verify neighbour platform and IOS version.
+show running-config interface fa0/1      Verify no lldp receive / no lldp transmit applied.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Disabled CDP and enabled LLDP globally on SW1, R1, R2, and SW2.
+✓ Verified default LLDP timers: 30s advertisement, 120s hold, 2s reinit delay.
+✓ Used `show lldp neighbors` to map every physical link in the topology.
+✓ Used `show lldp neighbors detail` to identify each neighbour's platform
+  and IOS version.
+✓ Disabled LLDP receive and transmit on SW2's Fa0/1 (PC-facing) interface.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• LLDP (Link Layer Discovery Protocol) — open, vendor-neutral standard
+• CDP vs LLDP — proprietary vs open, single vs dual enable/disable commands
+• LLDP global enable/disable (`lldp run` / `no cdp run`)
+• LLDP default timers (advertisement, hold, re-initialization delay)
+• Neighbour discovery (`show lldp neighbors`)
+• Neighbour detail / IOS version discovery (`show lldp neighbors detail`)
+• Per-interface LLDP control (`lldp receive` / `lldp transmit`)
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully disabled CDP and enabled LLDP across all four networking
+devices, verified the default LLDP timers, and used LLDP to map every
+link in the topology and identify each neighbour's platform and IOS
+version. Confirmed that, unlike CDP's single enable command, LLDP
+requires separate transmit and receive commands, and used this to lock
+down LLDP on a PC-facing access port.
+
+==================================================
+SOURCE
+==================================================
+
+Video: FREE CCNA Lab 034: LLDP (Link Layer Discovery Protocol)
+URL: https://www.youtube.com/watch?v=8D2V0rfl02A
+Transcript basis: auto-generated captions (see caption quality note below)
+
+Note: source captions mangle some numbers/model names (e.g. "coffee tea"
+for "conf t", "see 2900" for "Cisco 2900"). Corrected obvious cases above;
+the IOS version marked "[auto-caption unclear]" should be checked against
+the live device output before being treated as exact.
+
+==================================================
+END OF LAB
+==================================================

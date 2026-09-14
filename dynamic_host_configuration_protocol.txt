@@ -1,0 +1,296 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 035 - DHCP (Dynamic Host Configuration Protocol)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure R1 as a DHCP server handing out IP addresses, default gateway,
+and DNS server information to three separate networks. Configure R2's
+interface toward R1 as a DHCP client, and configure R2's interface toward
+a remote LAN as a DHCP relay agent, so hosts on a subnet not directly
+connected to the DHCP server can still obtain an address.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  PC1 (10.0.0.0/24)                         PC3 (20.0.0.0/24)
+       |                                          |
+     [SW]                                       [SW]
+       |                                          |
+     G0/0                                       G0/1
+     10.0.0.1                                   20.0.0.1
+      +------------------ R1 ------------------+
+                          G0/1
+                          192.168.1.1
+                            |
+                     (192.168.1.0/24)
+                            |
+                          G0/0
+                          (DHCP client)
+                            R2
+
+Note: exact interface numbering on R1 (which physical interface serves the
+10.0.0.0/24 LAN vs. the 192.168.1.0/24 link to R2) is inferred from context,
+not stated explicitly in the source video — verify against the live device.
+The IP addresses themselves are confirmed by the DHCP pool configuration
+and the `ip helper-address` command below.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Subnet Mask       Notes
+----------------------------------------------------------------------------------
+R1          G0/0        10.0.0.1          255.255.255.0     DHCP server, PC1's gateway
+R1          G0/1        192.168.1.1       255.255.255.0     DHCP server, link to R2
+R2          G0/0        (DHCP-assigned)   255.255.255.0     DHCP client, from POOL12
+R2          G0/1        20.0.0.1          255.255.255.0     DHCP relay agent, PC3's gateway
+PC1         NIC         (DHCP-assigned)   255.255.255.0     From POOL10
+PC3         NIC         (DHCP-assigned)   255.255.255.0     From POOL20, via relay
+
+Before configuration, PC1 and PC3 both show an APIPA address in the
+169.254.0.0/16 range (no DHCP server reachable yet).
+
+==================================================
+STEP 1 - CONFIGURE R1 AS DHCP SERVER
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+
+ip dhcp pool POOL10                              Create/enter DHCP pool "POOL10".
+ network 10.0.0.0 255.255.255.0                  Define the scope of addresses to hand out.
+ default-router 10.0.0.1                         Set the default gateway given to clients.
+ dns-server 10.0.0.1                             Set the DNS server given to clients
+                                                  (no real DNS server configured in this
+                                                  lab — command shown for demonstration).
+exit                                             Return to Global Configuration mode.
+
+ip dhcp excluded-address 10.0.0.1 10.0.0.10      Reserve .1-.10 in this pool so DHCP never
+                                                  hands them out (configured in global
+                                                  config mode, not inside the pool).
+
+ip dhcp pool POOL20                              Create/enter DHCP pool "POOL20".
+ network 20.0.0.0 255.255.255.0                  Define the scope of addresses to hand out.
+ default-router 20.0.0.1                         Gateway for this remote subnet (R2's G0/1).
+ dns-server 20.0.0.1                             DNS server given to clients (demo only).
+exit                                             Return to Global Configuration mode.
+
+ip dhcp excluded-address 20.0.0.1 20.0.0.10      Reserve .1-.10 in this pool.
+
+ip dhcp pool POOL12                              Create/enter DHCP pool "POOL12".
+ network 192.168.1.0 255.255.255.0               Scope for R2's G0/0 to obtain an address
+                                                  from via DHCP (no default-router/dns-server
+                                                  configured for this pool in the video).
+exit                                             Return to Global Configuration mode.
+
+Verify (on PC1):
+ipconfig /release                                Release the APIPA address.
+ipconfig /renew                                  Request a new address — PC1 now receives
+                                                  an IP, default gateway, and DNS server
+                                                  from POOL10.
+
+==================================================
+STEP 2 - CONFIGURE R2'S INTERFACE AS A DHCP CLIENT
+==================================================
+
+---------------- R2 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+interface g0/0                                   Enter the interface facing R1
+                                                  (currently has no IP address).
+ ip address dhcp                                 Configure the interface to obtain its IP
+                                                  address dynamically via DHCP, from R1's
+                                                  POOL12 (192.168.1.0/24).
+ no shutdown                                     Enable the interface.
+exit                                             Return to Global Configuration mode.
+
+R2 logs a message confirming it was assigned a DHCP address.
+
+==================================================
+STEP 3 - CONFIGURE R2'S INTERFACE AS A DHCP RELAY AGENT
+==================================================
+
+Rationale: R1 has a pool (POOL20) for the 20.0.0.0/24 network, but the
+hosts on that network aren't directly connected to R1 — they sit behind
+R2. DHCP is broadcast-based and won't cross a router by default, so the
+router interface closest to those hosts (R2's G0/1) must relay DHCP
+requests to the actual DHCP server (R1).
+
+Verify first (on PC3):
+ipconfig                                         Confirms PC3 still has an APIPA address
+                                                  (169.254.x.x) — no DHCP server reachable yet.
+
+---------------- R2 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+configure terminal                               Enter Global Configuration mode.
+interface g0/1                                   Enter the interface facing PC3's network.
+ ip helper-address 192.168.1.1                   Configure this interface as a DHCP relay
+                                                  agent, forwarding DHCP broadcasts to R1's
+                                                  address (192.168.1.1) as a unicast.
+exit                                             Return to Global Configuration mode.
+
+Verify (on PC3):
+ipconfig /release                                Release the APIPA address.
+ipconfig /renew                                  Request a new address — PC3 now receives an
+                                                  IP in 20.0.0.0/24, a default gateway, and a
+                                                  DNS server, relayed by R2 from R1's POOL20.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip dhcp pool                                Displays configured DHCP pools and their
+                                                  utilization on R1.
+show ip dhcp binding                             Displays leased IP-to-MAC bindings on R1.
+show ip interface brief                          Verify interface IP addresses/status.
+show running-config                              Verify pool, exclusion, and helper-address
+                                                  configuration.
+ipconfig (on each PC)                            Verify assigned IP, gateway, and DNS server.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Verified PC1 and PC3 start with APIPA (169.254.x.x) addresses.
+✓ Configured R1 as a DHCP server with three pools: POOL10 (10.0.0.0/24),
+  POOL20 (20.0.0.0/24), and POOL12 (192.168.1.0/24).
+✓ Excluded the first 10 addresses of POOL10 and POOL20 from distribution.
+✓ Verified PC1 obtains an address, gateway, and DNS server from POOL10.
+✓ Configured R2's G0/0 as a DHCP client, obtaining an address from POOL12.
+✓ Configured R2's G0/1 as a DHCP relay agent (`ip helper-address`) pointing
+  at R1, so PC3 (on a subnet not directly connected to R1) can still
+  obtain an address from POOL20.
+✓ Verified PC3 obtains an address, gateway, and DNS server via the relay.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• DHCP (Dynamic Host Configuration Protocol) — a protocol that
+  automatically assigns an IP address, subnet mask, default gateway, and
+  other network settings (like a DNS server) to a client, so a host
+  doesn't need to be configured with this information by hand.
+• APIPA (Automatic Private IP Addressing) — a fallback address a Windows
+  host self-assigns from the 169.254.0.0/16 range when it's configured
+  for DHCP but receives no response from any DHCP server; it signals
+  "no DHCP reply reached me," not a normal working address.
+• DHCP pool configuration (`ip dhcp pool`, `network`, `default-router`,
+  `dns-server`) — the set of commands that define a DHCP server's scope
+  of addresses to lease (`network`), the default gateway to hand out
+  (`default-router`), and the DNS server to hand out (`dns-server`), all
+  entered inside a named DHCP pool.
+• Excluded address ranges (`ip dhcp excluded-address`) — a command that
+  reserves specific addresses within a pool's scope so DHCP never leases
+  them out (e.g. addresses already hand-assigned to a gateway or server);
+  configured in global configuration mode, not inside the pool itself.
+• DHCP client interface configuration (`ip address dhcp`) — an interface
+  command that tells a router (or switch SVI) to obtain its own IP
+  address dynamically from a DHCP server, the same way a PC would.
+• DHCP relay agent (`ip helper-address`) — an interface command that
+  converts DHCP's broadcast-based Discover/Request messages into a
+  unicast forwarded to a specific DHCP server, allowing a subnet with no
+  local DHCP server to still obtain addresses from one elsewhere, since
+  broadcasts don't cross a router hop on their own.
+• Rule of thumb: configure the relay agent (`ip helper-address`) on the
+  router interface closest to the hosts needing an address, not on the
+  DHCP server's own router interface.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured R1 as a DHCP server serving three separate
+address pools, confirmed a directly connected host (PC1) receives its
+addressing automatically, configured R2 to obtain its own address as a
+DHCP client, and configured R2 as a DHCP relay agent so that PC3 — on a
+subnet with no direct connection to the DHCP server — could still obtain
+an address, gateway, and DNS server via relayed DHCP messages.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+DHCP request cycle (DORA)
+  Discover -> Offer -> Request -> Acknowledge. `ipconfig /release` +
+  `/renew` in this lab just triggers this cycle manually. Both Discover
+  and Request are broadcasts — that's why the exchange can't cross a
+  router without a relay agent (below).
+  Exam: if asked why a client re-broadcasts DHCPREQUEST instead of
+  unicasting to the offering server — it lets any other DHCP server on
+  the segment see the offer was accepted/declined.
+  Real world: a host stuck "obtaining IP address" is usually failing
+  somewhere in this cycle — packet capture on the switchport shows which
+  step never got a reply.
+
+APIPA (169.254.0.0/16)
+  A host lands here only when set for DHCP and getting no response at all.
+  Exam: know the range (169.254.0.0/16) and that it means no DHCP reply
+  reached the client — not a misconfigured static IP.
+  Real world: 169.254.x.x is the fastest visual sign a request never
+  reached a server — check the physical link/VLAN and the segment's relay
+  config before suspecting the pool itself.
+
+Excluded addresses
+  Configured globally (`ip dhcp excluded-address`), not inside the pool.
+  Exam: a classic trap, since every other pool setting lives inside
+  `ip dhcp pool` — expect a question testing whether you know this one
+  command lives outside it.
+  Real world: this range protects addresses you've already hand-assigned
+  (gateway, DNS servers, printers, APs) from being leased out again.
+
+DHCP relay agent (`ip helper-address`)
+  DHCP broadcasts die at the first router hop, so a central server can't
+  directly serve a subnet it isn't attached to; `ip helper-address` on
+  that subnet's gateway interface converts the broadcast to a unicast at
+  the real server.
+  Exam: know it's configured on the router interface *closest to the
+  clients*, not on the DHCP server's own router — and that it forwards
+  several well-known broadcast services, not only DHCP.
+  Real world: this is how one central DHCP server (or redundant pair)
+  covers every branch/VLAN in an enterprise network without a local server
+  per site. If one subnet's hosts get APIPA while others don't, checking
+  that subnet's gateway for a correct `ip helper-address` is one of the
+  first troubleshooting steps, before touching the pool.
+
+DHCP client on a router interface (`ip address dhcp`)
+  Same mechanism as a PC requesting an address, just on a router port.
+  Real world: this is how a small-office/branch router's WAN-facing
+  interface leases its public IP from an ISP.
+
+==================================================
+SOURCE
+==================================================
+
+Video: FREE CCNA Lab 035: DHCP (Dynamic Host Configuration Protocol)
+URL: https://www.youtube.com/watch?v=MaV1ku2fgXI
+Transcript basis: auto-generated captions (see caption quality note below)
+
+Note: source captions mangle numbers heavily (e.g. "1000 won" for
+"10.0.0.1", "coffee/tea" for "conf t"). IP addresses above were
+reconstructed from the surrounding context (pool network statements,
+default-router values, and the explicit "192.168.1 ... address of the
+DHCP server which is R1" line) and are internally consistent, but the
+exact R1 interface numbering (G0/0 vs G0/1) is inferred, not stated
+verbatim — verify against the live device/Packet Tracer file if precision
+matters.
+
+==================================================
+END OF LAB
+==================================================

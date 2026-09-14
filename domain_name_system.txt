@@ -1,0 +1,292 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 036 - DNS (Domain Name System)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn how DNS (Domain Name System) translates hostnames into IP addresses.
+Set up a DHCP pool on R1 that hands PC1 an IP address, default gateway,
+and DNS server; observe that name resolution fails until a DNS server is
+assigned; then manually configure a switch (which does not get its
+addressing via DHCP the same way) with a static default gateway and DNS
+server so it can resolve names too.
+
+==================================================
+TOPOLOGY
+==================================================
+
+           192.168.1.0/24
+  PC1 ----+                    Server1 (192.168.1.101)
+  PC2 ----+------- R1 ---------Server2 (192.168.1.102)
+  SW1 ----+                    DNS1    (192.168.1.100)
+
+All devices sit on the same 192.168.1.0/24 subnet. R1 acts as the DHCP
+server for the segment, handing addressing to **both PC1 and PC2** from
+the same pool. DNS1 is a pre-built DNS server (not configured in this
+lab) already holding hostname-to-IP records for Server1, Server2, and
+the other networking devices.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+R1          (LAN)       192.168.1.1       DHCP server, default gateway for the segment
+DNS1        --          192.168.1.100     Pre-configured DNS server (out of scope of lab)
+Server1     --          192.168.1.101     Resolved via hostname "server1"
+Server2     --          192.168.1.102     Resolved via hostname "server2"
+PC1         NIC         (DHCP-assigned)   From POOL1, later also gets DNS1 via DHCP
+PC2         NIC         (DHCP-assigned)   From POOL1, same as PC1 — video states both
+                                           PCs are addressed via DHCP, but only walks
+                                           through PC1's release/renew and ping tests
+                                           on screen; PC2 gets identical treatment.
+SW1         VLAN1       (already set)     Already has an IP on VLAN 1; gateway/DNS
+                                           must be added manually (see Step 3)
+
+==================================================
+STEP 1 - CONFIGURE R1'S DHCP POOL (NO DNS SERVER YET)
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+
+ip dhcp excluded-address 192.168.1.1 192.168.1.2 Reserve .1-.2 (gateway and a spare) from
+                                                  the pool. Configured globally, not inside
+                                                  the pool.
+
+ip dhcp pool POOL1                               Create/enter DHCP pool "POOL1".
+ network 192.168.1.0 255.255.255.0               Define the scope of addresses to hand out.
+ default-router 192.168.1.1                      Set the default gateway given to clients.
+exit                                              Return to Global Configuration mode.
+
+Deliberately no `dns-server` line yet, to first demonstrate what happens
+without one.
+
+Verify (on PC1):
+ipconfig /release                                Release any existing address.
+ipconfig /renew                                  Request a new address — PC1 now has an IP
+                                                  and default gateway, but no DNS server.
+
+PC2 gets addressed from the same pool the same way (`ipconfig /release` /
+`/renew`) — the video only screen-records PC1's output, but PC2 leases an
+address from POOL1 identically.
+
+==================================================
+STEP 2 - OBSERVE NAME RESOLUTION FAILING
+==================================================
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 192.168.1.101         Succeeds — pings Server1 by IP address (routed via default
+                            gateway R1, which forwards it to Server1).
+ping server1                Fails — "Ping request could not find host server1." Without
+                            a DNS server assigned, PC1 has no way to translate the name
+                            "server1" to its IP address.
+
+==================================================
+STEP 3 - ADD A DNS SERVER TO THE DHCP POOL
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+configure terminal                               Enter Global Configuration mode.
+ip dhcp pool POOL1                                Re-enter the existing pool.
+ dns-server 192.168.1.100                        Add DNS1 as the DNS server handed out to
+                                                  clients in this pool.
+exit                                              Return to Global Configuration mode.
+
+Verify (on PC1):
+ipconfig /release                                Release the current address.
+ipconfig /renew                                  Request a new address — PC1 now also
+                                                  receives the DNS server (192.168.1.100).
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping server1                Succeeds. Takes a moment while the name is resolved via
+                            DNS1, then shows the ping going to 192.168.1.101.
+ping server2                Succeeds the same way, resolving to 192.168.1.102.
+
+==================================================
+STEP 4 - TRY THE SAME FROM SWITCH 1 (NOT A DHCP CLIENT)
+==================================================
+
+SW1 already has an IP address on its VLAN 1 interface, so it can send and
+receive pings — but unlike PC1, it never went through R1's DHCP process,
+so it has no default gateway or DNS server configured yet.
+
+---------------- SW1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 192.168.1.101         Fails — no default gateway configured, so SW1 has no way to
+                            route the ping off itself.
+
+Since the ping by IP address already fails, there is no point trying the
+ping by name yet — that would only compound the same underlying problem.
+
+Reason: R1 distributes default gateway and DNS information to PC1 via
+DHCP, but that mechanism doesn't apply to SW1 here — it needs a default
+gateway and DNS server configured manually.
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+ip default-gateway 192.168.1.1                   Manually set R1 as SW1's default gateway.
+ip name-server 192.168.1.100                     Manually set DNS1 as SW1's DNS server.
+exit                                              Return to Privileged EXEC mode.
+
+Verify (on SW1):
+ping 192.168.1.101         Succeeds this time.
+ping server1                Succeeds — output shows "Translating server1 ...
+                            domain server (192.168.1.100)" followed by the resolved
+                            address (192.168.1.101).
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip dhcp pool                                Displays configured DHCP pools on R1.
+show running-config                              Verify pool, exclusion, and dns-server
+                                                  configuration on R1.
+show running-config | include name-server        Verify SW1's manually configured DNS
+                                                  server.
+ipconfig (on PC1)                                 Verify assigned IP, gateway, and DNS
+                                                  server.
+ping <hostname>                                  Verify name resolution end-to-end.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured R1 as a DHCP server (POOL1, 192.168.1.0/24) without a DNS
+  server first, to demonstrate the failure case.
+✓ Verified PC1 can ping Server1 by IP address but not by name without a
+  DNS server assigned.
+✓ Added DNS1 (192.168.1.100) as the pool's DNS server and verified PC1
+  can now resolve and ping both Server1 and Server2 by name.
+✓ Showed that SW1 — which already has an IP address but is not a DHCP
+  client — fails to ping even by IP address until it is given a default
+  gateway.
+✓ Manually configured SW1 with `ip default-gateway` and `ip name-server`,
+  and verified it can then ping by both IP address and hostname.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• DNS (Domain Name System) — a distributed naming service that resolves
+  human-readable hostnames (e.g. "server1") to the IP addresses computers
+  actually use to communicate. Used here so PC1/SW1 can reach servers by
+  name instead of memorizing their IP addresses.
+• DHCP DNS-server option (`dns-server` inside `ip dhcp pool`) — a setting
+  in a DHCP pool that tells the DHCP server to hand out a DNS server's
+  address to clients, in the same lease as their IP address and default
+  gateway, so the client needs no separate manual DNS configuration.
+• Ping by IP address vs. ping by name — pinging an IP address is a
+  connectivity test that never involves DNS; pinging a hostname first
+  requires the device to resolve that name to an IP address via a DNS
+  server, so it exercises both name resolution and connectivity at once.
+• "Ping request could not find host <name>" — the specific IOS error
+  returned when a device attempts to resolve a hostname but has no DNS
+  server configured (or the DNS server itself is unreachable/has no
+  record), as opposed to a routing/connectivity failure.
+• Switch addressing vs. DHCP client behaviour — a switch's VLAN 1 (or any
+  SVI) can hold an IP address without being a full DHCP client the way a
+  PC is; that address alone does not carry a default gateway or DNS
+  server, so both must be set explicitly.
+• `ip default-gateway` — the global-configuration command that manually
+  sets a Layer 2 switch's default gateway (the router it sends
+  off-subnet/off-device traffic to), functionally equivalent to what a
+  PC's DHCP lease provides automatically.
+• `ip name-server` — the global-configuration command that manually sets
+  the DNS server a switch itself uses to resolve hostnames, equivalent to
+  the DNS server a PC receives via DHCP.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured R1 to hand out addressing via DHCP, first without
+and then with a DNS server, confirming that name resolution specifically
+depends on a DNS server being known while IP-address connectivity does
+not. Also confirmed that a switch's own management IP does not carry a
+default gateway or DNS server the way a DHCP-leased PC address does, and
+fixed that with manual `ip default-gateway` / `ip name-server` commands,
+after which SW1 could both route off-device and resolve hostnames.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+DNS (Domain Name System)
+  Translates a hostname to an IP address. Doesn't affect IP-level
+  connectivity at all — a device with no DNS server can still ping by IP,
+  it just can't resolve names.
+  Exam: know the failure message ("Ping request could not find host
+  <name>") means no/failed DNS resolution, not a routing or connectivity
+  problem — don't jump to checking the gateway when this is the symptom.
+  Real world: this is the single most common "why won't it connect"
+  ticket that turns out to be DNS, not the network — always confirm
+  ping-by-IP works before troubleshooting anything else.
+
+DHCP option 6 (`dns-server` in `ip dhcp pool`)
+  DHCP can hand out a DNS server address alongside the IP/gateway, in the
+  same DHCPOFFER/DHCPACK. No extra exchange needed.
+  Exam: know `dns-server` is a line inside `ip dhcp pool`, same place as
+  `default-router` — an easy one-word swap trap on exam questions.
+  Real world: this is why plugging a laptop into any properly configured
+  office network "just works" for both browsing and pinging internal
+  hostnames, with zero manual configuration on the client.
+
+Switch management IP has no DHCP-style gateway/DNS
+  A switch's VLAN 1 (or any SVI) can get an IP address via `ip address
+  dhcp`, but that alone does not give it a default gateway or DNS server
+  the way a PC's DHCP lease does — those need `ip default-gateway` and
+  `ip name-server` set explicitly.
+  Exam: a classic exam trap — a switch with an IP but no
+  `ip default-gateway` cannot be reached from, or reach, anything off its
+  own subnet, and this command is easy to forget since routers/PCs don't
+  need it stated as its own command.
+  Real world: this is exactly why a freshly racked switch answers pings
+  from its own subnet but can't be reached from the NOC or reach an NTP/
+  syslog/TFTP server elsewhere — `ip default-gateway` (and `ip
+  name-server` if it needs to resolve names itself, e.g. for `ntp server
+  pool.ntp.org`) is one of the first things checked.
+
+==================================================
+SOURCE
+==================================================
+
+Video: FREE CCNA Lab 036: DNS (Domain Name System)
+URL: https://www.youtube.com/watch?v=VTVo3rQVUF0
+Transcript basis: auto-generated captions (see caption quality note below)
+
+Note: source captions mangle numbers heavily throughout (e.g. "1000 101"
+for "192.168.1.101", "2000 100" for "192.168.1.100", "coffee" for "conf t").
+All IP addresses above were reconstructed from context (the pool's network
+statement, the consistent mangled pattern for DNS1/Server1/Server2 across
+multiple mentions, and the excluded-address range) and are internally
+consistent, but should be verified against the live Packet Tracer file if
+exact precision matters.
+
+==================================================
+END OF LAB
+==================================================
