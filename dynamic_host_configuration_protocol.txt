@@ -183,18 +183,34 @@ LAB SUMMARY
 CONCEPTS LEARNED
 ==================================================
 
-• DHCP (Dynamic Host Configuration Protocol) — dynamic IP/gateway/DNS
-  assignment
-• APIPA (Automatic Private IP Addressing) — 169.254.0.0/16 fallback
+• DHCP (Dynamic Host Configuration Protocol) — a protocol that
+  automatically assigns an IP address, subnet mask, default gateway, and
+  other network settings (like a DNS server) to a client, so a host
+  doesn't need to be configured with this information by hand.
+• APIPA (Automatic Private IP Addressing) — a fallback address a Windows
+  host self-assigns from the 169.254.0.0/16 range when it's configured
+  for DHCP but receives no response from any DHCP server; it signals
+  "no DHCP reply reached me," not a normal working address.
 • DHCP pool configuration (`ip dhcp pool`, `network`, `default-router`,
-  `dns-server`)
-• Excluded address ranges (`ip dhcp excluded-address`, configured in
-  global config, not pool config)
-• DHCP client interface configuration (`ip address dhcp`)
-• DHCP relay agent (`ip helper-address`) and why it's needed — DHCP
-  broadcasts don't cross routers on their own
-• Rule of thumb: configure the relay agent on the Layer 3 interface
-  closest to the hosts, not on the DHCP server's own router
+  `dns-server`) — the set of commands that define a DHCP server's scope
+  of addresses to lease (`network`), the default gateway to hand out
+  (`default-router`), and the DNS server to hand out (`dns-server`), all
+  entered inside a named DHCP pool.
+• Excluded address ranges (`ip dhcp excluded-address`) — a command that
+  reserves specific addresses within a pool's scope so DHCP never leases
+  them out (e.g. addresses already hand-assigned to a gateway or server);
+  configured in global configuration mode, not inside the pool itself.
+• DHCP client interface configuration (`ip address dhcp`) — an interface
+  command that tells a router (or switch SVI) to obtain its own IP
+  address dynamically from a DHCP server, the same way a PC would.
+• DHCP relay agent (`ip helper-address`) — an interface command that
+  converts DHCP's broadcast-based Discover/Request messages into a
+  unicast forwarded to a specific DHCP server, allowing a subnet with no
+  local DHCP server to still obtain addresses from one elsewhere, since
+  broadcasts don't cross a router hop on their own.
+• Rule of thumb: configure the relay agent (`ip helper-address`) on the
+  router interface closest to the hosts needing an address, not on the
+  DHCP server's own router interface.
 
 ==================================================
 LAB RESULT
