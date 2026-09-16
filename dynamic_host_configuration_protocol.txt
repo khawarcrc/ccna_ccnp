@@ -275,22 +275,5 @@ DHCP client on a router interface (`ip address dhcp`)
   interface leases its public IP from an ISP.
 
 ==================================================
-SOURCE
-==================================================
-
-Video: FREE CCNA Lab 035: DHCP (Dynamic Host Configuration Protocol)
-URL: https://www.youtube.com/watch?v=MaV1ku2fgXI
-Transcript basis: auto-generated captions (see caption quality note below)
-
-Note: source captions mangle numbers heavily (e.g. "1000 won" for
-"10.0.0.1", "coffee/tea" for "conf t"). IP addresses above were
-reconstructed from the surrounding context (pool network statements,
-default-router values, and the explicit "192.168.1 ... address of the
-DHCP server which is R1" line) and are internally consistent, but the
-exact R1 interface numbering (G0/0 vs G0/1) is inferred, not stated
-verbatim — verify against the live device/Packet Tracer file if precision
-matters.
-
-==================================================
 END OF LAB
 ==================================================

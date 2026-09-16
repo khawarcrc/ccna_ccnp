@@ -272,21 +272,5 @@ Switch management IP has no DHCP-style gateway/DNS
   pool.ntp.org`) is one of the first things checked.
 
 ==================================================
-SOURCE
-==================================================
-
-Video: FREE CCNA Lab 036: DNS (Domain Name System)
-URL: https://www.youtube.com/watch?v=VTVo3rQVUF0
-Transcript basis: auto-generated captions (see caption quality note below)
-
-Note: source captions mangle numbers heavily throughout (e.g. "1000 101"
-for "192.168.1.101", "2000 100" for "192.168.1.100", "coffee" for "conf t").
-All IP addresses above were reconstructed from context (the pool's network
-statement, the consistent mangled pattern for DNS1/Server1/Server2 across
-multiple mentions, and the excluded-address range) and are internally
-consistent, but should be verified against the live Packet Tracer file if
-exact precision matters.
-
-==================================================
 END OF LAB
 ==================================================

@@ -181,18 +181,5 @@ requires separate transmit and receive commands, and used this to lock
 down LLDP on a PC-facing access port.
 
 ==================================================
-SOURCE
-==================================================
-
-Video: FREE CCNA Lab 034: LLDP (Link Layer Discovery Protocol)
-URL: https://www.youtube.com/watch?v=8D2V0rfl02A
-Transcript basis: auto-generated captions (see caption quality note below)
-
-Note: source captions mangle some numbers/model names (e.g. "coffee tea"
-for "conf t", "see 2900" for "Cisco 2900"). Corrected obvious cases above;
-the IOS version marked "[auto-caption unclear]" should be checked against
-the live device output before being treated as exact.
-
-==================================================
 END OF LAB
 ==================================================

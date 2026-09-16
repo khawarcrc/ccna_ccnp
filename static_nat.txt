@@ -1,0 +1,303 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 037 - Static NAT (Network Address Translation)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn how Static NAT (Network Address Translation) creates a fixed
+one-to-one mapping between a private "inside" IP address and a public
+"outside" IP address. Configure R1 with static NAT translations for
+PC1, PC2, and PC3 so that their private 192.168.1.0/24 addresses can
+reach Server1 across a serial link that simulates the public Internet
+(via ACLs on R1/R2), and verify each PC can ping Server1 only after its
+translation is configured.
+
+This is the first of a three-lab NAT series (Static NAT → Dynamic NAT →
+PAT); this lab covers Static NAT only.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+
+  |  PC1   |  192.168.1.11 --+
+  +--------+                 |
+                              |
+  +--------+                 |     +--------+       +----------------------+
+  |  PC2   |  192.168.1.12 --+-----|  SW1   |-------|   G0/0     R1  S0/3/0 |
+  +--------+                 |     +--------+       |  (inside)     (outside)
+                              |                      +----------------------+
+  +--------+                 |                                  |
+  |  PC3   |  192.168.1.13 --+                                  |
+  +--------+                                          Serial link with ACLs
+      Private LAN                                    simulating the Internet
+   192.168.1.0/24                                 (rejects RFC 1918 addresses)
+                                                                  |
+                                                    +----------------------+
+                                                    |  S0/3/0    R2    G0/0 |
+                                                    +----------------------+
+                                                                  |
+                                                             +--------+
+                                                             |  SW2   |
+                                                             +--------+
+                                                                  |
+                                                             +----------+
+                                                             | Server1  |
+                                                             |1.1.1.100 |
+                                                             +----------+
+
+PC1, PC2, and PC3 connect into SW1, a Layer 2 switch, which uplinks into
+R1's G0/0 (the inside NAT interface facing the private
+192.168.1.0/24 network). On the other side, R1's S0/3/0 (the outside
+NAT interface) connects via a serial link to R2 — this link has ACLs
+applied to it specifically to reject private (RFC 1918) addresses,
+simulating how real ISPs/backbone routers would drop unroutable private
+traffic on the public Internet. R2 then connects out its G0/0 into SW2,
+another Layer 2 switch, which connects to Server1 (1.1.1.100). RIP is
+pre-configured across the whole topology so every device can already
+reach every other device at the routing level — the problem this lab
+solves is address translation, not reachability.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+PC1         NIC         192.168.1.11      Private inside address
+PC2         NIC         192.168.1.12      Private inside address
+PC3         NIC         192.168.1.13      Private inside address
+R1          G0/0        (LAN side)        Inside NAT interface, faces PC1/PC2/PC3
+R1          S0/3/0      (WAN side)        Outside NAT interface, faces simulated Internet
+Server1     --          1.1.1.100         Public outside address (destination)
+
+Static NAT translations configured on R1:
+  192.168.1.11  <->  1.2.3.11   (PC1's public-facing address)
+  192.168.1.12  <->  1.2.3.12   (PC2's public-facing address)
+  192.168.1.13  <->  1.2.3.13   (PC3's public-facing address)
+
+==================================================
+STEP 1 - OBSERVE THE PROBLEM (PING FAILS BEFORE NAT)
+==================================================
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Fails. RIP has full reachability, but the ACLs on the
+                            R1-R2 serial link (simulating the Internet) drop private
+                            (192.168.1.0/24) source addresses — PC1's ping to Server1
+                            uses source 192.168.1.11, which is dropped in transit, and
+                            even if it got through, Server1's reply (source 1.1.1.100,
+                            destination 192.168.1.11) would also be dropped on the way
+                            back since 192.168.1.11 cannot be routed over the "Internet".
+
+==================================================
+STEP 2 - DESIGNATE R1'S INSIDE AND OUTSIDE NAT INTERFACES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+
+interface GigabitEthernet0/0                     Enter the interface facing the private
+                                                  LAN (PC1/PC2/PC3).
+ ip nat inside                                   Mark this interface as the NAT "inside"
+                                                  side — traffic entering here is
+                                                  eligible for inside-to-outside
+                                                  translation.
+exit                                              Return to Global Configuration mode.
+
+interface Serial0/3/0                            Enter the interface facing the
+                                                  simulated Internet (link to R2).
+ ip nat outside                                  Mark this interface as the NAT
+                                                  "outside" side — traffic entering here
+                                                  is eligible for outside-to-inside
+                                                  translation.
+exit                                              Return to Global Configuration mode.
+
+==================================================
+STEP 3 - CONFIGURE THE STATIC NAT TRANSLATIONS
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+ip nat inside source static 192.168.1.11 1.2.3.11  Create a permanent one-to-one mapping:
+                                                    PC1's inside address 192.168.1.11 is
+                                                    always translated to outside address
+                                                    1.2.3.11, and vice versa.
+ip nat inside source static 192.168.1.12 1.2.3.12  Same mapping for PC2.
+ip nat inside source static 192.168.1.13 1.2.3.13  Same mapping for PC3.
+
+Once these three lines are entered, R1's static NAT configuration is
+complete — no further commands are needed for the translations to take
+effect.
+
+==================================================
+STEP 4 - VERIFY NAT WORKS (PING SUCCEEDS AFTER NAT)
+==================================================
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Succeeds. PC1 sends with source 192.168.1.11; when the
+                            packet reaches R1, R1 translates the source to 1.2.3.11
+                            before forwarding it out S0/3/0. Server1 replies to
+                            1.2.3.11; when that reply reaches R1's outside interface,
+                            R1 translates the destination back to 192.168.1.11 and
+                            forwards it to PC1.
+
+---------------- PC2 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Succeeds, translated via the 192.168.1.12 <-> 1.2.3.12
+                            mapping the same way as PC1.
+
+---------------- PC3 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Succeeds, translated via the 192.168.1.13 <-> 1.2.3.13
+                            mapping the same way as PC1.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip nat translations                         Lists all active NAT translation
+                                                  entries — confirms each PC's
+                                                  inside-local/inside-global mapping.
+show ip nat statistics                           Shows counts of active translations,
+                                                  hits/misses, and which interfaces are
+                                                  marked inside/outside.
+show running-config                              Verify `ip nat inside`/`ip nat outside`
+                                                  on the correct interfaces and the three
+                                                  `ip nat inside source static` lines.
+ping <destination>                                Verify end-to-end reachability from
+                                                  each PC to Server1.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Observed that PC1 cannot ping Server1 before NAT is configured, because
+  the private 192.168.1.0/24 addresses cannot be routed across the
+  simulated Internet link (ACLs on the R1-R2 serial connection drop
+  private source/destination addresses).
+✓ Marked R1's G0/0 (LAN-facing) as `ip nat inside` and S0/3/0
+  (Internet-facing) as `ip nat outside`.
+✓ Configured three static NAT translations on R1, one per PC, each
+  mapping a private 192.168.1.0/24 address to a distinct public
+  1.2.3.0/24 address.
+✓ Verified all three PCs (PC1, PC2, PC3) can successfully ping Server1
+  (1.1.1.100) once their static translation is in place.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Static NAT (Network Address Translation) — a NAT mode that creates a
+  fixed, permanent one-to-one mapping between one inside (typically
+  private) IP address and one outside (typically public) IP address.
+  Unlike dynamic NAT or PAT, the mapping does not change and is not
+  shared — it is configured explicitly per host and stays active whether
+  or not traffic is flowing.
+• Inside vs. outside NAT interfaces (`ip nat inside` / `ip nat outside`)
+  — interface-level markers that tell the router which side of a device
+  the private network sits on (inside) and which side faces the public
+  network/Internet (outside). NAT translation only happens for traffic
+  that crosses between an interface marked inside and one marked
+  outside.
+• `ip nat inside source static <inside-local> <inside-global>` — the
+  command that creates a static NAT entry: the first address is the
+  real private address of the inside host, the second is the public
+  address it is translated to when leaving the inside network.
+• Inside local vs. inside global address — the "inside local" address is
+  a host's real address as it exists on the private/inside network
+  (e.g. 192.168.1.11); the "inside global" address is the translated
+  public-facing address that same host appears as once traffic reaches
+  the outside network (e.g. 1.2.3.11).
+• Private (RFC 1918) address space — IP ranges (such as
+  192.168.0.0/16, used here as 192.168.1.0/24) reserved for internal use
+  only; Internet routers are configured to never forward packets sourced
+  from or destined to these ranges, which is why translation is required
+  before such a packet can cross a public network — simulated in this
+  lab via ACLs on the R1-R2 serial link instead of real Internet
+  routers.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured static NAT on R1, mapping each of PC1, PC2, and
+PC3's private 192.168.1.0/24 address to a distinct public 1.2.3.0/24
+address. Confirmed that pings from all three PCs to Server1 (1.1.1.100)
+fail before NAT is configured (private addresses cannot cross the
+simulated Internet link) and succeed once the inside/outside interfaces
+are marked and the three static translations are in place, proving the
+one-to-one address translation is working correctly in both directions.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Static NAT
+  A permanent, dedicated one-to-one address mapping — one private
+  address always translates to the same one public address, regardless
+  of traffic volume or session state.
+  Exam: know static NAT is the only NAT type that supports unsolicited
+  inbound connections initiated from the outside (e.g. reaching an
+  internal server from the Internet), because the mapping exists whether
+  or not the inside host has sent anything first — dynamic NAT and PAT
+  only create translations in response to outbound traffic.
+  Real world: used for servers that must be reachable from the outside
+  on a known, fixed public IP — e.g. a mail server, a web server, or a
+  device an ISP/partner needs a stable address to reach — as opposed to
+  general client Internet access, where dynamic NAT/PAT are more
+  practical since they don't require one public IP per host.
+
+`ip nat inside` / `ip nat outside`
+  Interface-level flags that define the direction NAT translation runs;
+  without both flags set correctly, `ip nat inside source static` alone
+  does nothing.
+  Exam: a very common exam trap is a static NAT config that "should
+  work" on paper but was never applied on any interface — always check
+  `show ip nat statistics` (Total interfaces column) or `show
+  running-config` for the inside/outside interface flags before assuming
+  the static/dynamic rule itself is the problem.
+  Real world: this is the first thing checked when NAT "isn't working"
+  in production — a misconfigured or missing `ip nat inside`/`outside`
+  on the wrong interface (e.g. after a re-cabling or interface renumber)
+  silently breaks all translation even though the NAT rules themselves
+  are untouched.
+
+Inside local vs. inside global addressing
+  The same host has two addresses depending on which side of the router
+  you're looking from: its real private address (inside local) and its
+  translated public address (inside global).
+  Exam: expect terminology questions distinguishing inside
+  local/inside global/outside local/outside global — static NAT labs
+  are the easiest way to internalize this since the mapping is fixed and
+  explicit in the config.
+  Real world: this vocabulary is exactly what shows up in
+  `show ip nat translations` output and in NAT troubleshooting
+  conversations with an ISP or security team — knowing which address a
+  packet capture "should" show at which point in the path is essential
+  for diagnosing NAT-related connectivity issues.
+
+==================================================
+END OF LAB
+==================================================
