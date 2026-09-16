@@ -1,0 +1,351 @@
+
+==================================================
+LAB NAME
+==================================================
+
+Lab 038 - Dynamic NAT (Network Address Translation)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn how Dynamic NAT (Network Address Translation) differs from Static
+NAT by translating private inside addresses to public outside addresses
+on demand, drawn from a pre-configured pool of outside addresses, rather
+than through a fixed one-to-one mapping per host. Configure R1 with a
+standard ACL to identify which inside traffic is eligible for
+translation, a NAT pool of outside addresses, and a dynamic NAT rule
+tying the two together, so PC1, PC2, and PC3 can each reach Server1
+without a dedicated static translation per PC.
+
+This lab reuses the same topology as Lab 037 (Static NAT) — the second
+of a three-lab NAT series (Static NAT → Dynamic NAT → PAT).
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+
+  |  PC1   |  192.168.1.11 --+
+  +--------+                 |
+                              |
+  +--------+                 |     +--------+       +----------------------+
+  |  PC2   |  192.168.1.12 --+-----|  SW1   |-------|   G0/0     R1  S0/3/0 |
+  +--------+                 |     +--------+       |  (inside)     (outside)
+                              |                      +----------------------+
+  +--------+                 |                                  |
+  |  PC3   |  192.168.1.13 --+                                  |
+  +--------+                                          Serial link with ACLs
+      Private LAN                                    simulating the Internet
+   192.168.1.0/24                                 (rejects RFC 1918 addresses)
+                                                                  |
+                                                    +----------------------+
+                                                    |  S0/3/0    R2    G0/0 |
+                                                    +----------------------+
+                                                                  |
+                                                             +--------+
+                                                             |  SW2   |
+                                                             +--------+
+                                                                  |
+                                                             +----------+
+                                                             | Server1  |
+                                                             |1.1.1.100 |
+                                                             +----------+
+
+PC1, PC2, and PC3 connect into SW1, which uplinks into R1's G0/0 (the
+inside NAT interface facing the private 192.168.1.0/24 network). R1's
+S0/3/0 (the outside NAT interface) connects via a serial link to R2 —
+this link has ACLs applied to it specifically to reject private
+(RFC 1918) addresses, simulating how real ISPs/backbone routers would
+drop unroutable private traffic on the public Internet. R2 connects out
+its G0/0 into SW2, which connects to Server1 (1.1.1.100). RIP is
+pre-configured across the whole topology so every device can already
+reach every other device at the routing level — the problem this lab
+solves is address translation, not reachability.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+PC1         NIC         192.168.1.11      Private inside address
+PC2         NIC         192.168.1.12      Private inside address
+PC3         NIC         192.168.1.13      Private inside address
+R1          G0/0        (LAN side)        Inside NAT interface, faces SW1/PC1-3
+R1          S0/3/0      (WAN side)        Outside NAT interface, faces simulated Internet
+Server1     --          1.1.1.100         Public outside address (destination)
+
+Dynamic NAT pool configured on R1:
+  Pool name:    POOL1
+  Address range: 1.2.3.10 - 1.2.3.20
+  Netmask:      255.255.255.0
+  ACL:          access-list 1, permits source 192.168.1.0/24
+
+Unlike Static NAT's fixed per-host mapping, any of PC1/PC2/PC3 may be
+translated to any free address in the 1.2.3.10-1.2.3.20 range — the
+exact address a given PC gets is assigned dynamically, on demand.
+
+==================================================
+STEP 1 - OBSERVE THE PROBLEM (PING FAILS BEFORE NAT)
+==================================================
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Fails, for the same reason as in the Static NAT lab: the
+                            ACLs on the R1-R2 serial link (simulating the Internet)
+                            drop private (192.168.1.0/24) source/destination
+                            addresses, so PC1's private address cannot cross it
+                            untranslated.
+
+==================================================
+STEP 2 - DESIGNATE R1'S INSIDE AND OUTSIDE NAT INTERFACES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+
+interface GigabitEthernet0/0                     Enter the interface facing the private
+                                                  LAN (SW1/PC1-3).
+ ip nat inside                                   Mark this interface as the NAT "inside"
+                                                  side.
+exit                                              Return to Global Configuration mode.
+
+interface Serial0/3/0                            Enter the interface facing the
+                                                  simulated Internet (link to R2).
+ ip nat outside                                  Mark this interface as the NAT
+                                                  "outside" side.
+exit                                              Return to Global Configuration mode.
+
+==================================================
+STEP 3 - CREATE AN ACL TO IDENTIFY TRANSLATABLE TRAFFIC
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+access-list 1 permit 192.168.1.0 0.0.0.255       Standard ACL matching any source
+                                                  address in the 192.168.1.0/24 network.
+
+Unlike a normal traffic-filtering ACL applied to an interface, this ACL
+is not used to permit/deny traffic in or out of an interface — it is
+referenced by the NAT configuration to decide which traffic is
+*eligible for translation*. Traffic the ACL permits gets translated;
+traffic it denies is simply left untranslated (not blocked). The
+implicit "deny any" at the end of every ACL means any address outside
+192.168.1.0/24 will never be translated by this rule.
+
+==================================================
+STEP 4 - CREATE THE NAT POOL OF OUTSIDE ADDRESSES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                                      Explanation
+-----------------------------------------------------------------------------------------
+ip nat pool POOL1 1.2.3.10 1.2.3.20 netmask 255.255.255.0    Creates a NAT pool named
+                                                              POOL1 containing the
+                                                              address range
+                                                              1.2.3.10-1.2.3.20 (11
+                                                              usable outside addresses),
+                                                              with subnet mask
+                                                              255.255.255.0.
+
+==================================================
+STEP 5 - BIND THE ACL AND POOL TOGETHER WITH DYNAMIC NAT
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+ip nat inside source list 1 pool POOL1           Configures dynamic NAT: any inside
+                                                  traffic matching ACL 1 (source
+                                                  192.168.1.0/24) is translated to an
+                                                  address dynamically assigned from
+                                                  POOL1. This replaces the `static`
+                                                  keyword used in the Static NAT lab
+                                                  with `list <acl>` + `pool <pool-name>`.
+
+Dynamic NAT configuration is now complete — no per-host mapping is
+needed.
+
+==================================================
+STEP 6 - VERIFY NAT WORKS AND INSPECT THE TRANSLATIONS
+==================================================
+
+---------------- PC1, PC2, PC3 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Succeeds from all three PCs. Each PC's private address is
+                            dynamically translated to a free address from POOL1
+                            (1.2.3.10-1.2.3.20) as its traffic crosses R1.
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+show ip nat translations           Lists the active dynamic translations. Output shows
+                                    columns for inside global / inside local (and
+                                    outside local / outside global, unused here). Inside
+                                    global is the translated address in the 1.2.3.0/24
+                                    pool range; inside local is the original private
+                                    address in 192.168.1.0/24. A colon-separated number
+                                    after each IP address is the port number associated
+                                    with that translation entry.
+clear ip nat translation *         Manually clears all current dynamic NAT translation
+                                    table entries (the asterisk means "all"). Confirmed
+                                    by running `show ip nat translations` again
+                                    afterward and seeing the table empty.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip nat translations                         Lists all active dynamic translation
+                                                  entries (inside local <-> inside
+                                                  global pairs, with port numbers).
+show ip nat statistics                           Shows pool usage, hits/misses, and
+                                                  which interfaces are marked
+                                                  inside/outside.
+show access-lists                                Verify ACL 1 matches the correct
+                                                  192.168.1.0/24 network.
+show running-config                              Verify the pool definition, ACL, and
+                                                  the `ip nat inside source list 1 pool
+                                                  POOL1` line.
+clear ip nat translation *                        Clears all dynamic translations (used
+                                                  to reset/observe fresh translations).
+ping <destination>                                Verify end-to-end reachability from
+                                                  each PC to Server1.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Observed that PC1 cannot ping Server1 before NAT is configured, for the
+  same private-address routing reason as the Static NAT lab.
+✓ Marked R1's G0/0 as `ip nat inside` and S0/3/0 as `ip nat outside`,
+  same as Static NAT.
+✓ Created a standard ACL (access-list 1) permitting the entire
+  192.168.1.0/24 network, used to identify translation-eligible traffic
+  rather than to filter it.
+✓ Created a NAT pool (POOL1, 1.2.3.10-1.2.3.20, netmask 255.255.255.0)
+  as the range of outside addresses available for translation.
+✓ Configured dynamic NAT with `ip nat inside source list 1 pool POOL1`,
+  binding the ACL and pool together.
+✓ Verified all three PCs can ping Server1, each receiving a dynamically
+  assigned address from POOL1, and inspected/cleared the translation
+  table with `show ip nat translations` / `clear ip nat translation *`.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Dynamic NAT (Network Address Translation) — a NAT mode that translates
+  inside private addresses to outside public addresses on demand,
+  assigning them from a pre-configured pool rather than through a fixed
+  per-host mapping. More address-efficient than Static NAT when not
+  every inside host needs a permanently reserved public address, since
+  the pool's addresses are shared and only consumed while a translation
+  is actually active.
+• NAT pool (`ip nat pool <name> <start-ip> <end-ip> netmask <mask>`) — a
+  named, bounded range of outside addresses that dynamic NAT draws from
+  when it needs to create a new translation. Once the pool is exhausted,
+  further inside hosts cannot get a new translation until an existing
+  one is freed.
+• ACL used for NAT eligibility, not traffic filtering — in this context
+  a standard ACL's permit/deny decision does not allow or block traffic
+  at an interface; it decides only whether NAT translates that traffic.
+  Permitted traffic gets translated; denied traffic (including anything
+  caught by the implicit "deny any") is simply passed through
+  untranslated, not dropped.
+• `ip nat inside source list <acl> pool <pool-name>` — the command that
+  binds an ACL (defining which inside addresses are eligible) to a NAT
+  pool (defining which outside addresses to assign), enabling dynamic
+  NAT. Structurally parallel to Static NAT's `ip nat inside source
+  static <inside> <outside>`, but replacing the fixed address pair with
+  an ACL + pool reference.
+• Inside global vs. inside local (in `show ip nat translations` output)
+  — inside global is a host's translated, pool-assigned public address;
+  inside local is its real private address. The port number shown after
+  the colon on each address identifies the specific translation entry,
+  since multiple inside hosts can be tracked through the same or
+  different pool addresses simultaneously.
+• `clear ip nat translation *` — manually clears every dynamic NAT
+  translation entry immediately, rather than waiting for entries to
+  time out naturally. Useful for testing/troubleshooting when a clean
+  translation table is needed.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured dynamic NAT on R1 using a standard ACL (matching
+192.168.1.0/24) bound to a NAT pool (POOL1, 1.2.3.10-1.2.3.20). Verified
+all three PCs — PC1, PC2, and PC3 — can ping Server1 (1.1.1.100), each
+receiving an on-demand translation to an address from the pool rather
+than a dedicated static mapping, and confirmed the resulting inside
+local/inside global pairs in `show ip nat translations`, then cleared
+them with `clear ip nat translation *`.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Dynamic NAT vs. Static NAT
+  Dynamic NAT shares a pool of public addresses across many inside
+  hosts, assigning one only while a translation is active; Static NAT
+  permanently reserves one public address per host regardless of
+  activity.
+  Exam: know dynamic NAT (like static NAT) still requires one outside
+  address per simultaneously active inside host — if the pool is smaller
+  than the number of hosts needing translation at once, some hosts will
+  fail to get a translation until the pool frees up. This limitation is
+  exactly what PAT (the next lab) solves by allowing many hosts to share
+  one outside address via port numbers.
+  Real world: dynamic NAT is rarely used alone in modern networks
+  (PAT/NAT overload is far more common for outbound client traffic)
+  but understanding it is the necessary stepping stone to understanding
+  PAT, and it still appears where a limited-but-multiple set of public
+  IPs must be shared without full one-to-one dedication.
+
+ACL used for NAT vs. ACL used for filtering
+  The same `access-list` syntax serves two very different NAT/security
+  purposes depending on where it's referenced.
+  Exam: a very common trap is assuming a permit/deny ACL referenced in a
+  NAT command also filters traffic at that interface — it does not;
+  it only decides translation eligibility. Don't confuse an ACL applied
+  with `ip access-group` (filters) with one referenced by `ip nat inside
+  source list` (decides NAT eligibility only).
+  Real world: this dual-purpose ACL usage is why network engineers must
+  always check *how* an ACL is referenced (interface `access-group` vs.
+  NAT `inside source list` vs. route-map, etc.) before assuming what it
+  actually does in a given configuration — the same ACL number/name can
+  be reused for multiple unrelated purposes in the same config.
+
+NAT pool exhaustion
+  A dynamic NAT pool has a finite number of addresses; once all are in
+  active use, additional inside hosts requesting translation are denied
+  until an existing translation times out or is cleared.
+  Exam: expect scenario questions about a pool sized smaller than the
+  number of hosts needing simultaneous translation — the "extra" hosts
+  simply cannot get an inside global address until one frees up.
+  Real world: this is a genuine operational failure mode — undersized
+  NAT pools cause intermittent, hard-to-diagnose connectivity failures
+  under load that don't appear in light testing, which is one of the
+  practical reasons PAT (port-based sharing of a single address) is
+  preferred for scaling outbound client traffic.
+
+==================================================
+END OF LAB
+==================================================
