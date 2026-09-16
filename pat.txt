@@ -1,0 +1,343 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 039 - PAT (Port Address Translation)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn how PAT (Port Address Translation, also called NAT overload)
+lets many inside private addresses share a single outside public
+address — unlike Static NAT (one-to-one) and Dynamic NAT (many-to-many,
+from a pool), PAT is many-to-one: every inside host is translated to
+the same outside address, and R1 uses Layer 4 port numbers to track
+which return traffic belongs to which PC. Configure PAT on R1 so PC1,
+PC2, and PC3 can all reach Server1 simultaneously through R1's single
+outside interface address.
+
+This is the third and last of a three-lab NAT series (Static NAT →
+Dynamic NAT → PAT) and reuses the same topology as the previous two
+labs.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+
+  |  PC1   |  192.168.1.11 --+
+  +--------+                 |
+                              |
+  +--------+                 |     +--------+       +----------------------+
+  |  PC2   |  192.168.1.12 --+-----|  SW1   |-------|   G0/0     R1  S0/3/0 |
+  +--------+                 |     +--------+       |  (inside)     (outside)
+                              |                      +----------------------+
+  +--------+                 |                                  |     1.2.3.1
+  |  PC3   |  192.168.1.13 --+                                  |
+  +--------+                                          Serial link with ACLs
+      Private LAN                                    simulating the Internet
+   192.168.1.0/24                                 (rejects RFC 1918 addresses)
+                                                                  |
+                                                    +----------------------+
+                                                    |  S0/3/0    R2    G0/0 |
+                                                    +----------------------+
+                                                                  |
+                                                             +--------+
+                                                             |  SW2   |
+                                                             +--------+
+                                                                  |
+                                                             +----------+
+                                                             | Server1  |
+                                                             |1.1.1.100 |
+                                                             +----------+
+
+PC1, PC2, and PC3 connect into SW1, which uplinks into R1's G0/0 (the
+inside NAT interface facing the private 192.168.1.0/24 network). R1's
+S0/3/0 (the outside NAT interface, address 1.2.3.1) connects via a
+serial link to R2 — this link has ACLs applied to it specifically to
+reject private (RFC 1918) addresses, simulating how real ISPs/backbone
+routers would drop unroutable private traffic on the public Internet.
+R2 connects out its G0/0 into SW2, which connects to Server1
+(1.1.1.100). RIP is pre-configured across the whole topology so every
+device can already reach every other device at the routing level — the
+problem this lab solves is address translation, not reachability.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+PC1         NIC         192.168.1.11      Private inside address
+PC2         NIC         192.168.1.12      Private inside address
+PC3         NIC         192.168.1.13      Private inside address
+R1          G0/0        (LAN side)        Inside NAT interface, faces SW1/PC1-3
+R1          S0/3/0      1.2.3.1           Outside NAT interface — the single shared
+                                           address all inside hosts are translated to
+Server1     --          1.1.1.100         Public outside address (destination)
+
+PAT configuration on R1:
+  ACL:          access-list 1, permits source 192.168.1.0/24
+  Translation:  all matching inside addresses -> R1's own S0/3/0 address
+                (1.2.3.1), overloaded (shared via port numbers)
+
+Unlike Dynamic NAT's pool of many outside addresses, PAT translates
+every inside host to the exact same single outside address — R1
+distinguishes each host's traffic by the Layer 4 (TCP/UDP) port number
+it assigns per translation, not by a different IP address.
+
+==================================================
+STEP 1 - OBSERVE THE PROBLEM (PING FAILS BEFORE NAT)
+==================================================
+
+---------------- PC1 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Fails, for the same reason as the previous two NAT labs:
+                            the ACLs on the R1-R2 serial link (simulating the
+                            Internet) drop private (192.168.1.0/24)
+                            source/destination addresses, so PC1's private address
+                            cannot cross it untranslated.
+
+==================================================
+STEP 2 - DESIGNATE R1'S INSIDE AND OUTSIDE NAT INTERFACES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+enable                                           Enter Privileged EXEC mode.
+configure terminal                               Enter Global Configuration mode.
+
+interface GigabitEthernet0/0                     Enter the interface facing the private
+                                                  LAN (SW1/PC1-3).
+ ip nat inside                                   Mark this interface as the NAT "inside"
+                                                  side.
+exit                                              Return to Global Configuration mode.
+
+interface Serial0/3/0                            Enter the interface facing the
+                                                  simulated Internet (link to R2).
+ ip nat outside                                  Mark this interface as the NAT
+                                                  "outside" side.
+exit                                              Return to Global Configuration mode.
+
+==================================================
+STEP 3 - CREATE AN ACL TO IDENTIFY TRANSLATABLE TRAFFIC
+==================================================
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+access-list 1 permit 192.168.1.0 0.0.0.255       Standard ACL matching any source
+                                                  address in the 192.168.1.0/24 network.
+
+Same principle as in the Dynamic NAT lab: this ACL is not applied to an
+interface to filter traffic — it is referenced by the NAT configuration
+to identify which traffic is eligible for translation. Traffic the ACL
+permits gets translated; traffic it denies is simply left untranslated,
+not blocked.
+
+==================================================
+STEP 4 - CONFIGURE PAT (NAT OVERLOAD) TO THE OUTSIDE INTERFACE
+==================================================
+
+---------------- R1 ----------------
+
+Command                                                        Explanation
+-----------------------------------------------------------------------------------------
+ip nat inside source list 1 interface Serial0/3/0 overload     Configures PAT: any
+                                                                 inside traffic
+                                                                 matching ACL 1 is
+                                                                 translated to the IP
+                                                                 address currently
+                                                                 configured on
+                                                                 Serial0/3/0 (R1's own
+                                                                 outside interface)
+                                                                 instead of to a
+                                                                 separate pool address.
+                                                                 The `interface`
+                                                                 keyword substitutes a
+                                                                 specific interface's
+                                                                 address for a NAT pool.
+                                                                 `overload` is what
+                                                                 allows many inside
+                                                                 hosts to share that one
+                                                                 outside address at the
+                                                                 same time, by tracking
+                                                                 each translation's
+                                                                 Layer 4 port number.
+
+This differs from Dynamic NAT in two ways: no separate `ip nat pool` is
+created (the router's own outside interface address is used instead),
+and `overload` is added at the end to enable many-to-one port-based
+sharing. PAT configuration is now complete.
+
+==================================================
+STEP 5 - VERIFY NAT WORKS AND INSPECT THE TRANSLATIONS
+==================================================
+
+---------------- PC1, PC2, PC3 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 1.1.1.100              Succeeds from all three PCs, simultaneously. Each PC's
+                            private address is translated to the same outside
+                            address, 1.2.3.1 (R1's S0/3/0), differentiated only by
+                            port number.
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+show ip nat translations           Lists the active translations. The inside local
+                                    addresses (192.168.1.11/.12/.13) look the same as
+                                    in the Dynamic NAT lab, but every inside global
+                                    address is now identical (1.2.3.1) — R1
+                                    distinguishes each PC's traffic by the different
+                                    Layer 4 port number attached to each translation
+                                    entry, so return traffic from Server1 reaches the
+                                    correct PC.
+clear ip nat translation *         Manually clears all current NAT translation table
+                                    entries. Confirmed by running `show ip nat
+                                    translations` again afterward and seeing the
+                                    table empty.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip nat translations                         Lists all active translation entries
+                                                  — confirms the shared inside global
+                                                  address (1.2.3.1) and the distinct
+                                                  port number per PC.
+show ip nat statistics                           Shows translation counts, hits/misses,
+                                                  and which interfaces are marked
+                                                  inside/outside.
+show access-lists                                Verify ACL 1 matches the correct
+                                                  192.168.1.0/24 network.
+show running-config                              Verify the ACL and the `ip nat inside
+                                                  source list 1 interface Serial0/3/0
+                                                  overload` line.
+clear ip nat translation *                        Clears all current translations (used
+                                                  to reset/observe fresh ones).
+ping <destination>                                Verify end-to-end reachability from
+                                                  each PC to Server1.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Observed that PC1 cannot ping Server1 before NAT is configured, for the
+  same private-address routing reason as the previous two NAT labs.
+✓ Marked R1's G0/0 as `ip nat inside` and S0/3/0 as `ip nat outside`,
+  same as the earlier NAT labs.
+✓ Created a standard ACL (access-list 1) permitting the entire
+  192.168.1.0/24 network, used to identify translation-eligible traffic.
+✓ Configured PAT with `ip nat inside source list 1 interface
+  Serial0/3/0 overload`, translating all matching inside hosts to R1's
+  own outside interface address instead of a separate pool.
+✓ Verified all three PCs can ping Server1 simultaneously, all sharing
+  the single outside address 1.2.3.1, and confirmed in `show ip nat
+  translations` that each PC is distinguished by port number rather
+  than by a unique outside address.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• PAT (Port Address Translation), also called NAT overload — a NAT mode
+  that translates many inside private addresses to a single outside
+  public address, using Layer 4 (TCP/UDP) port numbers to distinguish
+  each host's traffic so return traffic reaches the correct inside
+  host. Often summarized against the other NAT types as: Static NAT is
+  one-to-one, Dynamic NAT is many-to-many (via a pool), PAT is
+  many-to-one.
+• `overload` keyword — the piece of the NAT command that specifically
+  enables port-based sharing of a single outside address among multiple
+  inside hosts; without it, only one inside host could use that outside
+  address at a time.
+• `ip nat inside source list <acl> interface <interface> overload` — the
+  PAT configuration command. It reuses the same ACL-based eligibility
+  approach as Dynamic NAT, but replaces the separate `pool <pool-name>`
+  reference with `interface <interface-name>`, meaning translated
+  traffic uses whatever IP address is currently configured on that
+  interface rather than a dedicated pool of addresses.
+• Layer 4 port number as a translation discriminator — when multiple
+  inside hosts share one outside IP address, the router assigns each
+  active translation a distinct source port number, and uses that
+  port (not the IP address) to know which inside host a given piece of
+  return traffic belongs to.
+• Address efficiency ordering across NAT types — Static NAT consumes one
+  public address per host permanently; Dynamic NAT consumes one public
+  address per simultaneously active host, drawn from a pool; PAT
+  consumes only one public address total, regardless of how many hosts
+  are active, because hosts are differentiated by port number instead
+  of by address.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured PAT on R1 using a standard ACL (matching
+192.168.1.0/24) combined with `ip nat inside source list 1 interface
+Serial0/3/0 overload`. Verified all three PCs — PC1, PC2, and PC3 — can
+ping Server1 (1.1.1.100) at the same time, all translated to the single
+shared outside address 1.2.3.1, and confirmed via `show ip nat
+translations` that each PC's translation is distinguished by a unique
+port number rather than a unique IP address, then cleared the
+translation table with `clear ip nat translation *`.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+PAT / NAT overload
+  Many inside hosts share exactly one outside IP address, differentiated
+  by Layer 4 port number rather than by address.
+  Exam: know the `overload` keyword is what specifically enables this
+  many-to-one sharing — omitting it while still specifying `interface
+  <if>` would attempt a one-to-one translation to that single interface
+  address and only support one active inside host at a time.
+  Real world: PAT is by far the most common form of NAT in real
+  networks — it's exactly what a home router or small-office router does
+  to let every device on the LAN share the single public IP address
+  assigned by the ISP.
+
+PAT vs. Dynamic NAT command structure
+  Both use `ip nat inside source list <acl> ...`, but Dynamic NAT points
+  at a `pool <name>` while PAT points at `interface <name>` plus
+  `overload`.
+  Exam: a classic exam trap is mixing up when to use `pool` vs.
+  `interface` — remember `interface` is used specifically when you want
+  to reuse an existing interface's own IP address as the translation
+  target (common when there's no separate block of public addresses to
+  spare), which is exactly the PAT scenario.
+  Real world: this `interface`-based approach is why a router with only
+  a single public IP from its ISP (the typical small-business or
+  residential case) can still provide full outbound Internet access to
+  every device behind it — there's no separate pool of addresses to
+  hand out, so PAT reuses the router's own WAN address.
+
+Port number tracking in `show ip nat translations`
+  Each translation entry shows a port number appended after the shared
+  inside global address, which is how the router disambiguates return
+  traffic.
+  Exam: expect a question testing whether you understand that the
+  inside global *addresses* being identical across multiple entries is
+  normal and expected for PAT — don't mistake it for a misconfiguration.
+  Real world: this port-based tracking is also why some protocols/
+  applications that embed IP addresses inside their payload (rather than
+  just using the IP/port headers) can misbehave behind PAT unless a
+  NAT-aware ALG (Application Layer Gateway) or protocol-specific fix is
+  in place — a genuine, still-relevant class of real-world NAT
+  troubleshooting.
+
+==================================================
+END OF LAB
+==================================================
