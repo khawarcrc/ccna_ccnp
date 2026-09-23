@@ -1,0 +1,380 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 040 - Syslog
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Learn the core aspects of syslog on a Cisco device: the 8 severity
+levels, adding timestamps to log messages, displaying syslog messages
+over Telnet (vty) as well as the console, enabling synchronous logging
+so messages don't interrupt command typing, buffering messages in RAM,
+and forwarding messages to an external syslog server for permanent,
+off-device storage.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+                      +----------------------+
+  |  PC1   |  192.168.1.x --------|   G0/0       R1       |
+  +--------+   (Telnet client)    |  (management/LAN side)|
+                                   |             G0/1      |----+
+  +--------+                      +----------------------+     |
+  |  PC2   |  (console cable to R1's console port,               |
+  +--------+   used for direct CLI access)                       |
+                                                          (unused interface,
+                                                           toggled to generate
+                                                           syslog messages)
+                                   +----------+
+                                   | Server1  |  192.168.1.100
+                                   +----------+  (external syslog server)
+
+PC2 connects directly to R1's console port (via a console cable, not
+the network) for the initial hands-on-device CLI access. PC1 connects
+over the network and Telnets into R1's G0/0 interface once vty access
+is configured. R1's G0/1 is an otherwise-unused interface, shut down
+and re-enabled repeatedly through the lab purely to generate syslog
+events on demand. Server1 (192.168.1.100) is configured later in the
+lab as the external syslog server R1 forwards its messages to.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+R1          G0/0        192.168.1.1       Management/LAN interface, Telnet target
+R1          G0/1        --                Unused interface, toggled for syslog testing
+Server1     --          192.168.1.100     External syslog server
+PC1         NIC         (network)         Telnets to R1 at 192.168.1.1
+PC2         --          --                Connected via console cable, not IP
+
+==================================================
+STEP 1 - CONNECT TO R1'S CONSOLE AND OBSERVE BASIC SYSLOG MESSAGES
+==================================================
+
+On PC2 (Packet Tracer): click PC2 -> Desktop -> Terminal -> accept the
+default connection settings to open a console CLI session on R1.
+
+---------------- R1 (via console) ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+enable                     Enter Privileged EXEC mode.
+configure terminal         Enter Global Configuration mode.
+interface GigabitEthernet0/0  Enter the interface to toggle.
+shutdown                   Administratively disable the interface — generates a
+                            syslog message reporting the interface/line protocol
+                            going down.
+no shutdown                Re-enable the interface — generates another syslog
+                            message reporting the interface/line protocol coming
+                            back up.
+
+The messages appear with a severity level indicator — a "%LINK" /
+"%LINEPROTO" style message showing severity level 5, which is Level 5
+"Informational": routine status information, not something requiring
+urgent attention.
+
+==================================================
+STEP 2 - ENABLE DATE/TIME STAMPS ON SYSLOG MESSAGES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                                Explanation
+-----------------------------------------------------------------------------------------
+exit                                                    Return to Global Configuration
+                                                         mode (from interface config).
+service timestamps log datetime msec                   Prefixes every syslog message
+                                                         with a date/time stamp (down to
+                                                         milliseconds) instead of just a
+                                                         relative uptime counter, so
+                                                         messages are meaningful when
+                                                         reviewed later.
+interface GigabitEthernet0/0                            Re-enter the interface to
+                                                         generate a fresh pair of
+                                                         messages for comparison.
+shutdown
+no shutdown
+
+The same interface up/down messages now appear with a date/time prefix
+at the start of each line — without this command, messages only carry
+a relative uptime counter, which is far less useful when reviewed after
+the fact.
+
+==================================================
+STEP 3 - CONFIGURE ENABLE SECRET AND VTY (TELNET) ACCESS
+==================================================
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+exit                                Return to Global Configuration mode.
+enable secret CCNA                  Set an encrypted enable-mode password, required
+                                    before Telnet access can reach Privileged EXEC.
+line vty 0 15                       Enter configuration for all 16 vty (Telnet/SSH)
+                                    lines at once.
+ password CCENT                    Set the line-level password required to log in
+                                    over Telnet.
+ login                              Require the configured line password to be
+                                    entered before granting CLI access.
+ transport input telnet             Restrict remote access on these lines to Telnet
+                                    only.
+exit                                Return to Global Configuration mode.
+
+---------------- PC1 ----------------
+
+Command                      Result
+-----------------------------------------------------------------------------------------
+telnet 192.168.1.1            Opens a Telnet session to R1's G0/0 interface.
+                              Prompts for the vty line password (CCENT) to log in,
+                              then requires the enable password (CCNA) to reach
+                              Privileged EXEC mode.
+
+==================================================
+STEP 4 - ENABLE SYSLOG MESSAGES OVER TELNET (TERMINAL MONITOR)
+==================================================
+
+---------------- R1 (via PC1's Telnet session) ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1  Enter an unused interface — deliberately not G0/0,
+                            since shutting down the interface the Telnet session
+                            itself is using would cut the connection.
+no shutdown                Toggling this interface generates a syslog message, but
+                            by default nothing appears in this Telnet session (only
+                            on PC2's direct console connection).
+end                         Return to Privileged EXEC mode.
+terminal monitor            Enables display of syslog/debug messages on the current
+                            (vty/Telnet) session — by default, syslog output is only
+                            sent to the console line, not to vty lines.
+configure terminal
+interface GigabitEthernet0/1
+shutdown                   Toggling the interface again — this time the syslog
+                            message appears in the Telnet session too, confirming
+                            `terminal monitor` worked, in addition to still
+                            appearing on PC2's console session.
+
+==================================================
+STEP 5 - CONFIGURE SYNCHRONOUS LOGGING (CONSOLE AND VTY)
+==================================================
+
+Without synchronous logging, a syslog message that arrives while you
+are mid-way through typing a command is inserted right into the middle
+of what you're typing, making the command hard to read. With it
+enabled, IOS instead redraws your in-progress command on a fresh line
+below the syslog message, so it stays readable before you press Enter.
+
+---------------- R1 ----------------
+
+Command                     Explanation
+-----------------------------------------------------------------------------------------
+line con 0                  Enter configuration for the console line.
+ logging synchronous        Enable synchronous logging on the console line.
+exit                        Return to Global Configuration mode.
+line vty 0 15                Enter configuration for all vty lines.
+ logging synchronous        Enable synchronous logging on the vty lines too.
+exit                        Return to Global Configuration mode.
+
+==================================================
+STEP 6 - ENABLE AND RESIZE LOGGING TO THE BUFFER (RAM)
+==================================================
+
+---------------- R1 ----------------
+
+Command                       Explanation
+-----------------------------------------------------------------------------------------
+do show logging               Run from config mode to check current logging status —
+                              shows buffer logging currently disabled.
+logging buffered              Enable logging to the internal RAM buffer, so past
+                              messages can be reviewed later with `show logging`
+                              even if they've scrolled off the terminal. Default
+                              buffer size is 4096 bytes.
+do show logging               Confirm buffered logging is now enabled and shows the
+                              default 4096-byte buffer size.
+logging buffered 8192         Resize the buffer to 8192 bytes (double the default),
+                              allowing more history to be retained in RAM before
+                              older messages are overwritten.
+do show logging               Confirm the buffer size is now 8192 bytes.
+
+==================================================
+STEP 7 - CONFIGURE AN EXTERNAL SYSLOG SERVER
+==================================================
+
+Buffered (RAM) logging is lost if the device reboots or loses power,
+and consumes onboard RAM that could otherwise be used elsewhere — an
+external syslog server keeps a permanent, off-device copy of all
+messages.
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+logging host 192.168.1.100          Configure R1 to send syslog messages to the
+                                    external syslog server at 192.168.1.100
+                                    (Server1). The equivalent shorter form `logging
+                                    192.168.1.100` works identically.
+do show logging                     Confirm the output now reports logging to
+                                    192.168.1.100.
+interface GigabitEthernet0/1
+shutdown
+no shutdown                        Toggle the interface once more to generate a
+                                    fresh message and confirm it's received by the
+                                    external server.
+
+On Server1 (Packet Tracer): click Server1 -> Services -> SYSLOG -> view
+the received messages in the left-hand log pane to confirm delivery.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show logging                                     Displays logging configuration status
+                                                  (console/buffer/host logging state,
+                                                  buffer size) plus buffered messages.
+show running-config                              Verify `service timestamps`, vty
+                                                  configuration, `logging synchronous`,
+                                                  `logging buffered`, and `logging
+                                                  host`/`logging` lines are all present.
+terminal monitor                                 Confirms/enables syslog display on
+                                                  the current vty session.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Observed basic syslog messages generated by shutting down/re-enabling
+  an interface, and identified their severity level (5, Informational).
+✓ Enabled date/time stamps on all syslog messages with `service
+  timestamps log datetime msec`.
+✓ Configured an enable secret and vty (Telnet) access so R1 could be
+  reached remotely from PC1.
+✓ Confirmed syslog messages don't display over Telnet by default, then
+  enabled them for the current session with `terminal monitor`.
+✓ Enabled synchronous logging on both the console and vty lines so
+  in-progress command typing isn't interrupted by incoming messages.
+✓ Enabled buffered (RAM) logging and increased its size from the
+  default 4096 bytes to 8192 bytes.
+✓ Configured R1 to forward syslog messages to an external syslog server
+  (Server1, 192.168.1.100) and verified receipt on the server itself.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Syslog — a standard logging protocol/mechanism used by network
+  devices to report status events and errors, ranging from routine
+  informational notices (like an interface coming up) to critical
+  failures that can render a device unfunctional; messages can be shown
+  live on the CLI and/or stored in RAM or on a dedicated server.
+• Syslog severity levels (0-7) — a numeric scale from 0 (Emergency, most
+  severe) to 7 (Debug, least severe/most verbose) that every syslog
+  message is tagged with, indicating how urgent or serious the event is.
+  All 8 levels (0 Emergency, 1 Alert, 2 Critical, 3 Error, 4 Warning,
+  5 Notification/Informational, 6 Informational, 7 Debugging — exact
+  wording varies by reference, but the numeric order and the 0=most
+  severe/7=least severe direction is the fixed part) are explicitly
+  called out in the video as required exam knowledge.
+• `service timestamps log datetime msec` — a global configuration
+  command that prefixes every syslog message with an actual date/time
+  (to millisecond precision) instead of a relative uptime counter,
+  making stored/reviewed logs far more useful for correlating events to
+  when they actually happened.
+• `terminal monitor` — a Privileged EXEC command that enables syslog and
+  debug output to display on the current vty (Telnet/SSH) session; by
+  default, this output is sent only to the console line, not to remote
+  vty sessions.
+• `logging synchronous` — a line-configuration command (applied under
+  `line con 0` and/or `line vty 0 15`) that prevents an incoming syslog
+  message from being inserted into the middle of a command you are
+  currently typing; instead, IOS redraws your unfinished input on a new
+  line below the message.
+• `logging buffered` — a global configuration command that stores
+  syslog messages in the router/switch's RAM (default 4096 bytes) so
+  they can be reviewed later with `show logging`, even after they've
+  scrolled off the terminal; the size can be changed by supplying a byte
+  value, e.g. `logging buffered 8192`.
+• `logging host <ip>` (or the shorter `logging <ip>`) — configures the
+  device to forward all syslog messages to an external syslog server at
+  the given IP address, providing permanent, off-device storage that
+  survives a reboot and doesn't consume the device's own RAM.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully explored syslog on R1: generated and interpreted basic
+severity-5 informational messages, added date/time stamps, configured
+Telnet (vty) access and enabled `terminal monitor` so messages display
+remotely as well as on the console, enabled `logging synchronous` on
+both the console and vty lines to keep typed commands readable, turned
+on and resized buffered (RAM) logging from 4096 to 8192 bytes, and
+finally configured and verified forwarding of syslog messages to an
+external syslog server (Server1, 192.168.1.100).
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Syslog severity levels (0-7)
+  A fixed numeric scale, 0 (Emergency) through 7 (Debug), attached to
+  every syslog message to indicate urgency.
+  Exam: memorize all 8 levels in order and which end is more severe (0)
+  vs. more verbose (7) — this is stated directly in the video as
+  required knowledge and is a very common exam question, often phrased
+  as "which severity level corresponds to X message type."
+  Real world: severity level is exactly what you filter on when tuning
+  a SIEM/log-monitoring system or an on-box `logging trap <level>`
+  setting — pulling every Debug-level message into a central log server
+  would be overwhelming, so real deployments typically only forward
+  Warning-and-above (or similar) to reduce noise while still catching
+  real problems.
+
+`terminal monitor`
+  Syslog output goes to the console line only by default; vty sessions
+  need `terminal monitor` explicitly to see it.
+  Exam: a common trap is troubleshooting "why don't I see any log
+  messages" over a Telnet/SSH session — the device is logging fine, the
+  session just hasn't enabled `terminal monitor`.
+  Real world: engineers SSH'd into a device remotely (the overwhelming
+  majority of real operational access, versus physical console access)
+  routinely forget this and mistakenly assume debug output isn't being
+  generated at all, when it's simply not being displayed to their
+  session.
+
+`logging synchronous`
+  Purely a CLI usability feature — it doesn't change what's logged, only
+  how cleanly it's displayed while you're typing.
+  Exam: know this is configured per-line (`line con 0` / `line vty 0
+  15`), not globally with one command — easy to forget one or the other
+  in a config-completeness question.
+  Real world: any engineer who has tried to type a long command while
+  debug output floods the screen understands why this exists — it's one
+  of the first things configured on a new device specifically to make
+  live troubleshooting sessions usable.
+
+External syslog server (`logging host`)
+  Sends a permanent copy of log messages off-device, unlike the RAM
+  buffer which is lost on reboot/power loss.
+  Exam: know the buffer (`logging buffered`) and the external server
+  (`logging host`) are independent, non-exclusive settings — a device
+  commonly runs both at once, one for quick on-box checks, one for
+  permanent storage.
+  Real world: centralized syslog (or a downstream SIEM ingesting syslog)
+  is a baseline requirement in almost every real network for security
+  auditing and post-incident investigation — if a device is compromised
+  or crashes, its local buffer is exactly the evidence that's most
+  likely to be lost, which is precisely why the external server exists.
+
+==================================================
+END OF LAB
+==================================================

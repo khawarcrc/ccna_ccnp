@@ -1,0 +1,367 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 072 - ACL Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot three misconfigurations among the four ACLs configured in
+Lab 071 (IPv4 and IPv6 ACLs) — one ACL is entirely correct, and the
+other three each have a distinct fault: a standard ACL with its
+statements in the wrong order (permit-before-deny, making the deny
+statement unreachable), an IPv6 ACL applied in the wrong direction, and
+an IPv6 ACL applied to the wrong line type (console instead of vty).
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology and same four ACLs as Lab 071 — see
+[ipv4_and_ipv6_acls.txt](ipv4_and_ipv6_acls.txt) for the full diagram
+and each ACL's intended design (block PC4 from 10.4.4.0/24; block PC5
+from 2001:DB8:2222::/64; block PC3 from reaching PC1 specifically;
+allow only PC6 to Telnet to R2). Nothing physically changed — three of
+the four ACLs have a configuration or application fault; the fourth
+(PC3-to-PC1 blocking) is confirmed working correctly, unchanged.
+
+==================================================
+PROBLEM 1 - ACL 1 (R2): STATEMENTS IN THE WRONG ORDER
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC4 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 10.4.4.100          Succeeds — but this ACL is supposed to block PC4 from
+                         reaching this exact network, so something is wrong.
+
+---------------- R2 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show access-lists         Reveals the fault: the ACL's statements are in the
+                         wrong order — `permit any` appears BEFORE
+                         `deny host 10.2.2.12`. Since ACL processing evaluates
+                         statements top-to-bottom and stops at the first
+                         match, EVERY packet (including PC4's) matches the
+                         `permit any` statement first and is immediately
+                         allowed — the deny statement below it is never even
+                         reached, making it completely unreachable/pointless
+                         as written.
+
+---------------- Fix (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+no access-list 1                         Deletes the entire misordered ACL —
+                                        individual numbered ACL statements can't
+                                        be reordered in place, so it's removed
+                                        and rebuilt from scratch in the correct
+                                        order.
+access-list 1 deny host 10.2.2.12         Re-adds the deny statement FIRST this
+                                        time.
+access-list 1 permit any                  Re-adds the permit statement SECOND —
+                                        now it only catches traffic that didn't
+                                        already match the deny above it.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 10.4.4.100 (from PC4)   Fails now — "Destination host unreachable," as
+                             intended.
+ping 10.4.4.100 (from PC3)   Still succeeds — confirming other hosts remain
+                             unaffected.
+
+==================================================
+PROBLEM 2 - ACL 2 (R1): APPLIED IN THE WRONG DIRECTION
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC5 ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+ping 2001:DB8:2222::100                  Succeeds — but this ACL is supposed to
+                                        block exactly this traffic.
+
+---------------- R1 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show access-lists            The ACL's actual content (statements) looks
+                             correct — still denying PC5, destined for the
+                             right subnet.
+show ipv6 interface           Reveals the actual fault: the ACL is applied as
+ GigabitEthernet0/2           "outgoing" (out) rather than inbound. PC5's
+                             traffic toward 2001:DB8:2222::/64 is ENTERING R1
+                             on G0/2 (coming from PC5's own segment), not
+                             exiting it — so an outbound-applied ACL never
+                             evaluates that traffic at all. Worse, the RETURN
+                             traffic coming back from Server2 (with source and
+                             destination addresses reversed relative to the
+                             original deny statement) doesn't match the deny
+                             condition either, so it passes right through the
+                             (wrongly-direction) outbound filter — the ACL was
+                             essentially filtering nothing relevant in either
+                             direction.
+
+---------------- Fix (R1) ----------------
+
+Command                                        Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/2
+ no ipv6 traffic-filter G0_2_in out               Removes the ACL from its
+                                                incorrect (outbound)
+                                                application.
+ ipv6 traffic-filter G0_2_in in                    Re-applies it inbound instead
+                                                — correctly filtering PC5's
+                                                traffic as it enters R1.
+
+---------------- Verify (PC5) ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+ping 2001:DB8:2222::100                  Fails now — "Destination host
+                                        unreachable" from R1, as intended.
+
+==================================================
+PROBLEM 3 - ACL 3 (R1): CONFIRMED WORKING CORRECTLY (NO FAULT)
+==================================================
+
+---------------- PC3 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 10.1.1.11            Fails — "Destination host unreachable," exactly as
+                         intended (PC3 blocked from reaching PC1).
+
+---------------- PC4 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 10.1.1.11            Succeeds — confirming the block is correctly scoped
+                         to PC3 only, not the whole subnet PC3 shares with PC4.
+
+This ACL required no changes — it's the one correctly-configured ACL in
+this lab, included specifically so the block-and-verify process is
+practiced even where nothing needs fixing.
+
+==================================================
+PROBLEM 4 - ACL 4 (R2): APPLIED TO THE WRONG LINE TYPE (CONSOLE INSTEAD OF VTY)
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC6 ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                  Succeeds, password CCNA accepted — this
+                                        part is working as intended (PC6 SHOULD
+                                        be able to Telnet in).
+
+---------------- PC5 ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                  ALSO succeeds — but PC5 is supposed to
+                                        be blocked from Telnetting to R2. This is
+                                        the fault to investigate.
+
+---------------- R2 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show access-lists         The ACL's content looks correct: `permit tcp host
+                         <PC6's address> any eq telnet`, relying on the
+                         implicit deny-all for everyone else.
+show run                   Reveals the actual fault: the ACL is applied to
+                         `line console 0` — the physical console port — NOT
+                         to the vty lines, which are what actually handle
+                         Telnet (remote) access. The console line has nothing
+                         to do with Telnet at all, so this ACL was never
+                         actually controlling Telnet access in the first
+                         place — it was applied to the wrong line entirely.
+
+---------------- Fix (R2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+line console 0
+ no ipv6 access-class telnet in              Removes the ACL from the (irrelevant)
+                                            console line.
+line vty 0 15
+ ipv6 access-class telnet in                  Applies it to the vty lines instead —
+                                            the actually correct location for
+                                            controlling Telnet/SSH remote access.
+
+---------------- Verify ----------------
+
+---------------- PC5 ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                  Fails now — correctly blocked.
+
+---------------- PC6 ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                  Still succeeds, password CCNA accepted —
+                                        confirming the fix didn't affect the
+                                        intended permitted host.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show access-lists                                Shows every ACL's statements
+                                                  IN ORDER — essential for
+                                                  spotting a permit-before-deny
+                                                  ordering mistake, since order
+                                                  is everything in ACL
+                                                  evaluation.
+show ip interface <interface>                     Confirms an IPv4 ACL's
+                                                  applied direction (in/out).
+show ipv6 interface <interface>                    Confirms an IPv6 ACL's
+                                                  applied direction — the
+                                                  "outgoing access list" line
+                                                  directly reveals a
+                                                  wrong-direction fault.
+show running-config                               Reveals exactly which line
+                                                  (console vs. vty) or
+                                                  interface an ACL is actually
+                                                  applied to.
+ping / telnet                                      Verify the intended host is
+                                                  blocked and permitted hosts
+                                                  remain unaffected.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed ACL 1 (R2) having its statements in the wrong order
+  (`permit any` before `deny host`), making the deny statement
+  unreachable — fixed by deleting and rebuilding the ACL with the deny
+  statement first.
+✓ Found and fixed ACL 2 (R1) applied outbound instead of inbound on
+  G0/2, meaning it never actually filtered PC5's outgoing traffic or
+  correctly blocked the return traffic either — fixed by reapplying it
+  inbound.
+✓ Confirmed ACL 3 (R1, blocking PC3 from PC1) was already correctly
+  configured, with no changes needed.
+✓ Found and fixed ACL 4 (R2) applied to the console line instead of
+  the vty lines, meaning it never actually controlled Telnet access at
+  all — fixed by removing it from console 0 and applying it to vty 0 15
+  instead.
+✓ Verified all four ACLs' intended behavior after fixes, confirming
+  each restriction correctly affected only its intended host.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• ACL statement order determines everything — ACLs are evaluated
+  top-to-bottom, stopping at the FIRST matching statement; a broad
+  `permit` statement placed before a more specific `deny` statement
+  makes that deny statement completely unreachable, since matching
+  traffic is already permitted before it's ever evaluated against the
+  deny — this is precisely why deny (more specific) statements normally
+  come before permit (broader) statements.
+• Wrong ACL direction (in vs. out) — an ACL applied outbound when it
+  should be inbound (or vice versa) doesn't just fail to block the
+  intended traffic; as demonstrated here, it can also fail to catch
+  RETURN traffic correctly, since a single-direction ACL only ever
+  evaluates traffic crossing the interface in that one specific
+  direction, and the two directions' source/destination addresses are
+  reversed relative to each other.
+• `show ipv6 interface` (or `show ip interface` for IPv4) revealing
+  applied ACL direction directly — the fastest way to confirm not just
+  THAT an ACL is applied, but in WHICH direction, without needing to
+  parse the full running-config.
+• Console line vs. VTY lines — the console line controls direct,
+  physical access to the router; VTY lines control remote access
+  (Telnet/SSH). An ACL controlling remote-access permissions must be
+  applied to the VTY lines specifically — applying it to the console
+  line instead has no effect on Telnet/SSH access whatsoever, even
+  though the ACL's own content may be entirely correct.
+• A correctly-configured ACL requiring no changes — this lab
+  deliberately includes one (ACL 3) to reinforce that troubleshooting
+  means confirming EVERY item against its actual requirement, not
+  assuming every listed item must have a fault simply because it's
+  part of a troubleshooting exercise.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed three separate ACL faults among the
+four ACLs from Lab 071: ACL 1's statements in the wrong order (deny
+after permit, making the deny unreachable), ACL 2 applied outbound
+instead of inbound, and ACL 4 applied to the console line instead of
+the vty lines. ACL 3 (blocking PC3 from reaching PC1) was confirmed
+already correct, with no changes needed. All four ACLs were verified
+working exactly as intended after the fixes — each blocking only its
+specific intended host/traffic, with all other hosts unaffected.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Permit-before-deny statement ordering
+  A broad permit statement placed above a specific deny statement
+  makes the deny completely unreachable — not partially, completely.
+  Exam: know that ACL statement ORDER is evaluated, always top to
+  bottom, stopping at the first match — a very frequently tested
+  concept, often phrased as "why isn't this deny statement working"
+  with the answer being statement order, exactly as in this lab.
+  Real world: this exact mistake — a broad allow rule accidentally
+  placed above a specific deny rule — is one of the most common
+  real-world firewall/ACL misconfigurations across virtually every
+  vendor's platform, not unique to Cisco IOS.
+
+ACL applied in the wrong direction
+  Direction isn't a minor detail — it determines which traffic flow
+  the ACL evaluates at all, and can leave BOTH directions effectively
+  unfiltered if applied backwards relative to a bidirectional
+  conversation.
+  Exam: always check the applied direction (`in`/`out`) against which
+  way the traffic that's SUPPOSED to be filtered is actually flowing
+  relative to that specific interface — don't assume a correctly-
+  written ACL is doing its job just because it's applied somewhere.
+  Real world: `show ip interface` / `show ipv6 interface`'s direct
+  reporting of applied ACL direction is exactly why experienced
+  engineers check this command early in ACL troubleshooting, rather
+  than re-reading the ACL's own statements first.
+
+Console line vs. VTY lines for access control
+  Applying an access-control ACL to the wrong line type doesn't
+  produce an error — it just silently does nothing for its intended
+  purpose.
+  Exam: know precisely which line type is associated with local
+  (console) vs. remote (VTY, for Telnet/SSH) access, and that access-
+  class-style ACLs must go on VTY lines to actually control Telnet/
+  SSH.
+  Real world: this specific mistake is a realistic "it looks
+  configured but does nothing" trap — always confirm WHERE an ACL is
+  actually applied (`show run`), not just that it exists and looks
+  correct in isolation.
+
+==================================================
+END OF LAB
+==================================================

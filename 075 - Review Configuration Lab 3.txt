@@ -1,0 +1,480 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 075 - Review Configuration Lab 3
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+A large cumulative review lab (the second-to-last lab in the series)
+combining BGP, OSPF, EIGRP, GRE, and PPP across two independent
+enterprises sharing the same ISP. Enterprise A (R1, R2) uses static
+routing to reach the Internet and OSPF internally, plus a GRE tunnel
+between its two branches. Enterprise B (R3, R4) uses EIGRP internally
+and eBGP (rather than a simple static route) to reach the ISP over a
+PPP link authenticated with CHAP. Finally, diagnose and fix a missing
+route preventing PC1 (Enterprise A) from reaching PC4 (Enterprise B).
+
+Note: unlike the earlier NAT labs, this lab's "Internet cloud" does NOT
+simulate the real-world restriction against routing private (RFC 1918)
+addresses over the Internet — no NAT or ACL workaround is needed here
+to send private-addressed traffic across it.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                          ENTERPRISE A
+  +--------+  G0/0                                    G0/0  +--------+
+  |  PC1   |--------+                          +--------------|  PC2*  |
+  +--------+ 192.168.1.0/24                192.168.2.0/24* +--------+
+                     |                                    |
+                +----+----+   GRE Tunnel0 (192.168.12.0/30)  +----+----+
+                |   R1    |=========over the Internet=========|   R2    |
+                +----+----+   R1 tunnel: .1   R2 tunnel: .2   +----+----+
+                G0/0/0 |     R1<->R2 also run OSPF area 0            | G0/0/0
+             203.0.113.2 |    over both G0/0 (LAN) and Tunnel0        | 203.0.113.6
+                     |     (static default route to ISP, via G0/0/0)  |
+                      \                                              /
+                       \                                            /
+                        +------------- Internet / ISP cloud --------+
+                       /                                              \
+                      /                                                \
+                203.0.113.8/30 (PPP, CHAP)                        (transit, EIGRP AS 100)
+                      |                                                  |
+                +-----+-----+  eBGP: AS65000 (R3) <-> AS65001 (ISP)  +---+-----+
+                |    ISP    |------------------------------------------|         |
+                +-----------+  203.0.113.9 (ISP side)              (implied — see below)
+                                                  |
+                          ENTERPRISE B      +-----+-----+
+                                            |    R3     |
+                                            +-----+-----+
+                                        G0/0 |     | (to R4, EIGRP)
+                                    192.168.3.0/24  |
+                                            |        |
+                                        +---+---+    |
+                                        |  PC3  |    |
+                                        +-------+    |
+                                                 +----+----+
+                                                 |   R4    |
+                                                 +----+----+
+                                                  G0/0 | 192.168.4.0/24
+                                                        |
+                                                    +---+---+
+                                                    |  PC4  |
+                                                    +-------+
+
+Enterprise A: R1 and R2 each reach the Internet via a static default
+route out their WAN interface (G0/0/0), and additionally run a GRE
+tunnel directly between each other (Tunnel0, 192.168.12.0/30) riding on
+top of that same Internet path — OSPF (area 0) runs between R1 and R2
+over BOTH their LAN interfaces and the tunnel interface, letting them
+exchange internal routes as if directly connected. Enterprise B: R3
+connects to the ISP over a PPP serial link (203.0.113.8/30)
+authenticated with CHAP, and additionally peers via eBGP (AS 65000 on
+R3's side, AS 65001 on the ISP's side) rather than using a simple
+static route. R3 and R4 run EIGRP (AS 100) internally.
+
+Note: several exact subnet addresses in this lab (R2's LAN, the R3-R4
+transit link) were not clearly distinguishable in the source captions
+— reconstructed above from context (address patterns explicitly
+confirmed elsewhere in the transcript, like 192.168.1.0/24 for PC1's
+subnet and 192.168.3.0/24 for R3's LAN) rather than invented; verify
+against the live Packet Tracer file if exact precision matters.
+
+==================================================
+STEP 1 - ENTERPRISE A: STATIC DEFAULT ROUTES TO THE INTERNET
+==================================================
+
+---------------- R1 ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ip route 0.0.0.0 0.0.0.0 GigabitEthernet0/0/0        A static default route out
+                                                    R1's WAN interface. Either
+                                                    an outgoing interface or a
+                                                    next-hop IP address works
+                                                    equally well here — the
+                                                    outgoing interface was used.
+
+---------------- R2 ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ip route 0.0.0.0 0.0.0.0 GigabitEthernet0/0/0        Same pattern on R2.
+
+==================================================
+STEP 2 - ENTERPRISE A: GRE TUNNEL BETWEEN R1 AND R2
+==================================================
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface tunnel 0
+ tunnel source GigabitEthernet0/0/0           R2's real WAN interface.
+ tunnel destination 203.0.113.2                R1's real WAN address — the
+                                            tunnel's underlying path crosses
+                                            the ISP/Internet cloud even though
+                                            R1 and R2 aren't physically
+                                            adjacent.
+ ip address 192.168.12.2 255.255.255.252       R2's side of the tunnel network,
+                                            per the lab's instructions to use
+                                            the 192.168.12.0/30 range.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface tunnel 0
+ tunnel source GigabitEthernet0/0/0
+ tunnel destination 203.0.113.6                R2's real WAN address.
+ ip address 192.168.12.1 255.255.255.252
+
+---------------- Verify ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 192.168.12.2 (from R1)  Succeeds — the tunnel is up.
+
+==================================================
+STEP 3 - ENTERPRISE A: CONFIGURE OSPF OVER THE LAN AND TUNNEL INTERFACES
+==================================================
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1                               The OSPF process ID is locally
+                                            significant — doesn't need to
+                                            match between R1 and R2.
+ network 192.168.1.0 0.0.0.255 area 0         Activates OSPF on R1's LAN
+                                            interface (PC1's subnet).
+ network 192.168.12.0 0.0.0.3 area 0          Activates OSPF on the tunnel
+                                            interface, using the exact /30
+                                            wildcard mask.
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1
+ network 192.168.2.0 0.0.0.255 area 0         Activates OSPF on R2's LAN
+                                            interface.
+ network 192.168.12.0 0.0.0.3 area 0          Activates OSPF on the tunnel
+                                            interface.
+
+---------------- Verify ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route (on R2)     (After a short wait for OSPF to converge) shows
+                         192.168.1.0/24, learned via OSPF from R1.
+show ip ospf neighbor      Confirms R1 as a neighbor, state "Full."
+
+==================================================
+STEP 4 - ENTERPRISE B: PPP WITH CHAP TO THE ISP
+==================================================
+
+The ISP side of this link is already pre-configured.
+
+---------------- Diagnose (R3) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+enable
+ping 203.0.113.9          Fails — as expected, before PPP/CHAP is configured.
+
+---------------- Configure (R3) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username ISP password CCNA               CHAP requires a local username matching
+                                        the FAR router's hostname (ISP), with a
+                                        password matching both ends — same rule
+                                        as the earlier PPP/CHAP labs.
+interface Serial0/0/0
+ shutdown                                 Shut down while configuring, to help
+                                        the interface come up more cleanly
+                                        afterward.
+ encapsulation ppp
+ ppp authentication chap
+ no shutdown
+
+---------------- Verify (R3) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 203.0.113.9          Succeeds now.
+
+==================================================
+STEP 5 - ENTERPRISE B: CONFIGURE EIGRP BETWEEN R3 AND R4
+==================================================
+
+---------------- R3 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router eigrp 100                            The EIGRP AS number MUST match
+                                            between R3 and R4 for them to become
+                                            neighbors — unlike OSPF's process ID.
+ network 203.0.113.8 0.0.0.3                  Advertises R3's WAN (PPP) link
+                                            subnet.
+ network 192.168.3.0 0.0.0.255                Advertises R3's LAN (PC3's
+                                            subnet).
+ passive-interface Serial0/0/0                Suppresses EIGRP hellos on the
+                                            PPP link to the ISP — no EIGRP
+                                            neighbor exists there (only R4 is
+                                            an EIGRP neighbor), so there's no
+                                            reason to send EIGRP traffic toward
+                                            the ISP at all.
+
+---------------- R4 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router eigrp 100
+ network 192.168.4.0 0.0.0.255                Advertises R4's LAN (PC4's
+                                            subnet).
+ network <R3-R4 transit subnet> ...           Also activates EIGRP on the
+                                            R3-R4 transit link (exact subnet
+                                            not clearly captured in the source
+                                            — see topology note above).
+
+---------------- Verify (R4) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route             Shows 192.168.3.0/24 (R3's LAN) and 203.0.113.8/30 (the
+                         R3-to-ISP link) learned via EIGRP.
+ping 192.168.3.100 (from   Succeeds — PC4 can now reach PC3, now that R4 knows a
+ PC4)                     route to R3's LAN.
+
+==================================================
+STEP 6 - ENTERPRISE B: CONFIGURE eBGP ON R3 TOWARD THE ISP
+==================================================
+
+Rather than a static default route (the method used in Enterprise A),
+Enterprise B connects to the ISP with BGP: R3 is in AS 65000, the ISP
+is in AS 65001.
+
+---------------- R3 ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+router bgp 65000
+ neighbor 203.0.113.9 remote-as 65001                Manually specifies the ISP as
+                                                    a BGP neighbor, in its
+                                                    separate AS — an eBGP
+                                                    peering, same pattern as the
+                                                    earlier BGP labs.
+ network 192.168.3.0 mask 255.255.255.0               Advertises R3's LAN into
+                                                    BGP — using an EXACT,
+                                                    regular subnet mask (not a
+                                                    wildcard), since BGP
+                                                    requires the advertised
+                                                    network to exactly match an
+                                                    existing routing-table entry.
+ network 192.168.4.0 mask 255.255.255.0               Also advertises R4's LAN
+                                                    (learned into R3's own
+                                                    routing table via EIGRP) —
+                                                    the border router can
+                                                    advertise routes it learned
+                                                    from an IGP into BGP this
+                                                    way.
+
+==================================================
+STEP 7 - DIAGNOSE AND FIX: PC1 CANNOT REACH PC4
+==================================================
+
+---------------- Confirm the problem (PC1) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 192.168.4.100           Fails.
+
+---------------- Diagnose (R4) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route             R4 has NO route to 192.168.1.0/24 (PC1's subnet) — or,
+                         more broadly, no route to anything beyond R3 at all.
+                         Normally this would call for iBGP or route
+                         redistribution between EIGRP and BGP (both more
+                         advanced topics outside this lab's scope), but the
+                         simplest fix here is a static route.
+
+---------------- Fix (R4) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 <R3's R4-facing     A static default route pointing at
+ address>                                  R3, giving R4 a path to reach
+                                            anything beyond R3 — including
+                                            Enterprise A's network, reached via
+                                            R3's BGP peering with the ISP.
+
+---------------- Verify (PC1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 192.168.4.100        Succeeds now.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip route                                    Confirms static, OSPF-,
+                                                  EIGRP-, and BGP-learned
+                                                  routes at each stage.
+show ip ospf neighbor                             Confirms the R1-R2 OSPF
+                                                  adjacency (over the tunnel
+                                                  and/or LAN interfaces).
+show ip eigrp neighbors                           Confirms the R3-R4 EIGRP
+                                                  adjacency.
+show ip bgp summary / show ip bgp neighbors        Confirms the R3-ISP eBGP
+                                                  session state.
+show interface tunnel 0                           Confirms GRE tunnel source/
+                                                  destination and status.
+ping / traceroute                                  Verify reachability at
+                                                  each stage of the lab.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured static default routes on R1 and R2 (Enterprise A) toward
+  the Internet.
+✓ Configured a GRE tunnel between R1 and R2 (192.168.12.0/30), riding
+  over their existing Internet path, and verified it with a successful
+  ping across it.
+✓ Configured OSPF (area 0) between R1 and R2 over both their LAN
+  interfaces and the tunnel interface, and confirmed route exchange
+  (Full neighbor state, learned routes in the routing table).
+✓ Configured PPP with CHAP authentication on R3's link to the ISP
+  (username matching the ISP's hostname), verified with a successful
+  ping.
+✓ Configured EIGRP AS 100 between R3 and R4 (Enterprise B's internal
+  network), with R3's WAN-facing serial interface set passive, and
+  verified route learning and PC3-to-PC4 reachability.
+✓ Configured eBGP on R3 (AS 65000) peering with the ISP (AS 65001),
+  advertising both R3's own LAN and R4's LAN (learned via EIGRP) into
+  BGP using exact-match `network` statements.
+✓ Diagnosed PC1's inability to reach PC4 as R4 having no route back
+  toward Enterprise A at all, and fixed it with the simplest available
+  option — a static default route on R4 pointing at R3 — rather than
+  the more advanced iBGP or redistribution alternatives, which were
+  explicitly noted as out of scope for this lab.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Combining independent routing domains under one lab — this lab
+  demonstrates that OSPF (Enterprise A), EIGRP (Enterprise B), and BGP
+  (Enterprise B's ISP connection) can all coexist in the same overall
+  network without conflict, each confined to its own appropriate scope
+  (an IGP within an enterprise, BGP at the boundary to another
+  organization).
+• GRE tunnel + OSPF combination (reviewed) — a tunnel interface
+  included in an IGP's `network` statement lets two sites exchange
+  routes as if directly connected, even though the physical path
+  between them crosses an entirely separate network (here, the shared
+  Internet/ISP cloud).
+• Static default route vs. BGP for Internet connectivity — this lab
+  deliberately contrasts the two approaches side by side: Enterprise A
+  uses simple static routes (adequate for many real single-homed
+  Internet connections), while Enterprise B specifically uses BGP
+  instead, even though a static route would technically have worked
+  just as well for its needs.
+• Advertising IGP-learned routes into BGP without redistribution — R3
+  manually advertises both its own LAN and R4's LAN (which R3 itself
+  only knows about via EIGRP) into BGP using individual `network`
+  statements — a simpler, more manual alternative to configuring true
+  redistribution between EIGRP and BGP, appropriate for a small,
+  stable network like this one.
+• Recognizing when a simple static route is the right fix — R4 missing
+  a route back to Enterprise A could have been solved with iBGP or
+  EIGRP-to-BGP redistribution, but the lab deliberately chooses the
+  simplest working solution (a static default route) instead,
+  reinforcing that the "most advanced" solution isn't always the
+  appropriate one for a given network's actual complexity.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured a combined-protocol network across two
+enterprises sharing one ISP: Enterprise A (static Internet routes, a
+GRE tunnel between R1/R2, and OSPF exchanging routes over both the LAN
+and tunnel interfaces) and Enterprise B (PPP with CHAP to the ISP,
+EIGRP between R3/R4 internally, and eBGP from R3 to the ISP advertising
+both R3's and R4's LANs). Diagnosed PC1's inability to reach PC4 as a
+missing return route on R4, and fixed it with a simple static default
+route pointing at R3 — deliberately choosing the simplest available fix
+over more advanced (but out-of-scope) alternatives like iBGP or
+EIGRP-to-BGP redistribution.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Static routing vs. BGP for single-homed Internet connectivity
+  Both are valid; the choice is architectural, not purely technical
+  necessity.
+  Exam: know that a simple static (often default) route is entirely
+  sufficient and common for a single-homed Internet connection — BGP
+  becomes necessary specifically for multi-homed connectivity (multiple
+  ISPs) or when an organization needs to announce its own address
+  space to the wider Internet, neither of which applies to Enterprise
+  A here.
+  Real world: this exact distinction — static routing for simple
+  single-ISP connectivity, BGP reserved for more complex multi-homed or
+  address-space-announcing scenarios — mirrors real-world network
+  design decisions almost exactly.
+
+Manually advertising IGP routes into BGP vs. true redistribution
+  A small, deliberate design choice suited to a small, stable network.
+  Exam: recognize that hand-typing individual `network` statements for
+  every route to advertise (as done here) is a valid, simpler
+  alternative to configuring `redistribute eigrp <as>` into BGP — but
+  doesn't automatically track future changes to the IGP's routes the
+  way true redistribution would.
+  Real world: manual advertisement like this is realistic for a small,
+  rarely-changing network; any organization with a growing or
+  frequently-changing internal network would move to proper
+  redistribution (with appropriate route filtering/route-maps) instead,
+  to avoid needing to remember to update BGP every time an internal
+  subnet changes.
+
+Choosing the simplest working fix over a more "correct" one
+  This lab explicitly acknowledges iBGP or redistribution would be the
+  more typical/scalable fix, but deliberately picks a static route
+  instead, since those techniques are out of scope.
+  Exam: for CCNA-level troubleshooting, always reach for the simplest
+  solution that satisfies the stated requirement — over-engineering a
+  fix beyond what's actually being tested is its own kind of mistake.
+  Real world: this reflects a genuinely important professional
+  instinct too — a working static route shipped today is often better
+  than a "more correct" but more complex solution that takes
+  significantly longer to design and test, especially in a small,
+  stable network where the added complexity of redistribution or iBGP
+  wouldn't provide meaningful benefit.
+
+==================================================
+END OF LAB
+==================================================

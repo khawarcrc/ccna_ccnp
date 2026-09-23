@@ -1,0 +1,276 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 070 - HSRP Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot two misconfigurations across the HSRP setup from Lab 069
+(HSRP): a mismatched HSRP version between R1 and R2 on VLAN 10, causing
+a duplicate-address condition (both routers claiming to be active), and
+preemption left disabled on R2 for VLAN 20, meaning R2 never reclaims
+its active role after recovering from a failure.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 069 — see [hsrp.txt](hsrp.txt) for the full
+diagram and addressing: two HSRP groups (group 10 for VLAN 10, virtual
+IP 10.10.10.1, R1 normally active; group 20 for VLAN 20, virtual IP
+10.20.20.1, R2 normally active). Nothing physically changed — one HSRP
+configuration problem per VLAN group was introduced (both, in this
+case, ended up being investigated on both routers before the actual
+fault was found).
+
+==================================================
+PROBLEM 1 - VLAN 10: HSRP VERSION MISMATCH CAUSING A DUPLICATE ADDRESS
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+                              R1 is repeatedly logging the same error message:
+                             "duplicate address 10.10.10.1" — the VLAN 10 virtual
+                             IP. This specific error typically means the two
+                             routers configured as an active/standby pair aren't
+                             recognizing each other correctly, so BOTH end up
+                             believing they're the active router — resulting in
+                             two devices simultaneously claiming the same
+                             (virtual) address. In this state, PCs can still use
+                             the virtual IP, but which physical router actually
+                             answers depends purely on whichever ARP reply
+                             happens to arrive first — unpredictable and not the
+                             intended behavior.
+terminal no monitor            Stops the repeating syslog messages from
+                             continuously appearing on the console, purely to
+                             make the terminal easier to work in while
+                             troubleshooting (this doesn't fix anything itself).
+show standby GigabitEthernet0/1  Confirms R1 believes itself to be ACTIVE for
+                             group 10 (as intended — priority 110) — nothing
+                             obviously wrong on R1's side alone.
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+terminal no monitor
+show standby GigabitEthernet0/2  R2 ALSO believes itself to be ACTIVE for group
+                             10 — confirming the duplicate-active condition
+                             directly. Comparing both routers' `show standby`
+                             output side by side reveals the actual fault: R2 is
+                             using HSRP version 2, but R1 is still on the
+                             default version 1 — the version mismatch is why the
+                             two routers fail to correctly recognize each other
+                             as an active/standby pair for this group.
+
+---------------- Fix (R1) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1
+ standby version 2                       Corrects R1 to HSRP version 2, matching
+                                        R2 and resolving the mismatch.
+
+---------------- Verify ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+show standby GigabitEthernet0/2  (After a short wait for the routers to
+ (on R2)                        renegotiate) confirms R2's state is now
+                                correctly STANDBY.
+traceroute 15.0.0.1 (from PC1)    Confirms traffic is going via R1's real
+                                address (10.10.10.2) — the correct, intended
+                                active router.
+
+Once R1's version was corrected, the duplicate-address error messages
+stopped on both routers — `terminal monitor` was re-enabled on each to
+resume normal syslog display.
+
+==================================================
+PROBLEM 2 - VLAN 20: R2 (ACTIVE) NOT RECLAIMING ITS ROLE AFTER RECOVERY
+==================================================
+
+Per the lab instructions, R2 was observed to not retake its active role
+for VLAN 20 after recovering from a simulated failure.
+
+---------------- Diagnose (R2) ----------------
+
+Command                            Result / Explanation
+-----------------------------------------------------------------------------------------
+show standby GigabitEthernet0/1      Confirms R2 is currently the active router
+                                    for group 20 (fine, in its normal state) —
+                                    but the described symptom (not reclaiming
+                                    active status after recovering from a
+                                    failure) is immediately recognizable without
+                                    needing further investigation: this is
+                                    specifically what happens when preemption is
+                                    disabled. Sure enough, the output explicitly
+                                    shows "Preemption disabled." With preemption
+                                    off, a router that fails over to standby
+                                    stays standby permanently even after
+                                    recovering — it will only become active
+                                    again if the CURRENT active router itself
+                                    later fails.
+
+---------------- Fix (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1
+ standby 20 preempt                      Enables preemption for group 20 on R2 —
+                                        the lab's design instructions call for
+                                        preemption to be enabled here, matching
+                                        the intended behavior from Lab 069 (R2
+                                        should reclaim active status after
+                                        recovering).
+
+---------------- Verify ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+show standby GigabitEthernet0/1  Confirms "Preemption enabled."
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show standby [interface]                          Shows HSRP group state
+                                                  (active/standby), priority,
+                                                  version, and preemption
+                                                  status — the primary command
+                                                  used throughout this lab.
+terminal no monitor / terminal monitor            Suppresses/resumes syslog
+                                                  message display on the
+                                                  console — a troubleshooting
+                                                  convenience, not a
+                                                  configuration fix.
+traceroute <destination>                          Confirms which router's real
+                                                  address is actually handling
+                                                  traffic, same technique used
+                                                  in Lab 069.
+show running-config                               Verify `standby version`,
+                                                  priority, and preempt lines
+                                                  match the intended design on
+                                                  both routers.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Diagnosed a "duplicate address" error on VLAN 10's virtual IP
+  (10.10.10.1), traced it to R1 still running HSRP version 1 while R2
+  was on version 2 — a version mismatch preventing the two routers from
+  correctly recognizing each other as an active/standby pair, causing
+  both to simultaneously claim active status. Fixed by correcting R1 to
+  `standby version 2`.
+✓ Diagnosed R2 failing to reclaim its active role for VLAN 20 after
+  recovering from a simulated failure, immediately recognized as a
+  preemption-disabled symptom, confirmed via `show standby` explicitly
+  reporting "Preemption disabled," and fixed with `standby 20 preempt`
+  on R2.
+✓ Used `terminal no monitor` / `terminal monitor` to manage the flow of
+  repeating syslog messages while troubleshooting, purely as a
+  usability aid.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• "Duplicate address" HSRP error — a specific, recognizable error
+  message indicating two routers configured for the same HSRP group are
+  both claiming to be active simultaneously, almost always caused by a
+  configuration mismatch (like a version mismatch) preventing them from
+  properly negotiating which one should actually be active.
+• HSRP version mismatch as a root cause — routers running different
+  HSRP versions (v1 vs. v2) on the same group don't correctly recognize
+  each other's HSRP messages, leading directly to the duplicate-active
+  condition; both routers' individual configurations can look
+  reasonable in isolation, requiring a side-by-side comparison
+  (specifically checking version) to spot the actual mismatch.
+• `terminal no monitor` / `terminal monitor` — controls whether syslog/
+  debug messages continue to display on the current console session;
+  useful purely as a troubleshooting convenience when repeating
+  messages make the terminal hard to work in, with no effect on the
+  underlying configuration or problem itself.
+• Preemption-disabled symptom recognition — "the active router doesn't
+  reclaim its role after recovering from a failure" is such a specific,
+  singular symptom of disabled preemption that it can often be
+  diagnosed directly from the description alone, without needing
+  extensive investigation — `show standby` explicitly reporting
+  "Preemption disabled/enabled" is the direct confirmation either way.
+• Symptom-first pattern recognition in troubleshooting — this lab
+  demonstrates that experience with a protocol's specific, well-known
+  failure symptoms (like this preemption case) can shortcut
+  troubleshooting significantly, though it's still good practice to
+  confirm the diagnosis with an actual `show` command rather than
+  acting purely on assumption.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed two separate HSRP faults: an HSRP
+version mismatch between R1 (version 1) and R2 (version 2) on VLAN 10,
+which had caused a duplicate-active-router condition and repeated
+"duplicate address" error messages (fixed by correcting R1 to version
+2, verified via `show standby` and a `traceroute` confirming traffic
+correctly routed via R1), and preemption left disabled on R2 for VLAN
+20, which had prevented R2 from reclaiming its active role after
+recovering from a failure (fixed with `standby 20 preempt`, verified
+via `show standby` reporting preemption enabled).
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+HSRP "duplicate address" from a version mismatch
+  A specific, named error tied to a specific, common root cause.
+  Exam: know that HSRP version mismatches (and similarly, mismatched
+  group numbers or virtual IPs between what should be a paired
+  active/standby configuration) are a classic cause of both routers
+  believing themselves active — always compare BOTH routers'
+  configuration side by side when this symptom appears, not just one.
+  Real world: this exact error and root cause pairing is genuinely
+  common in real HSRP deployments, especially after a router
+  replacement/upgrade where the new device defaults to a different
+  HSRP version than its still-in-service partner — a strong argument
+  for explicitly configuring (not relying on defaults for) HSRP version
+  on every device in a pair.
+
+Preemption-disabled as an instantly-recognizable symptom
+  "Doesn't reclaim its role after recovering" has essentially one cause.
+  Exam: this exact phrasing/scenario, tied specifically to preemption,
+  is a frequently tested pairing — expect to recognize it immediately
+  rather than needing to work through a broader troubleshooting process.
+  Real world: this is a genuinely common real-world "gotcha" —
+  preemption being left at its default (disabled, in HSRP's actual
+  default) after a maintenance window or router swap can leave the
+  "backup" router permanently handling production traffic without
+  anyone immediately noticing, until it's specifically checked.
+
+`terminal no monitor` as a pure troubleshooting convenience
+  Doesn't fix anything — purely manages console readability while
+  investigating a separate real fault.
+  Exam: don't mistake this for a configuration command relevant to the
+  actual HSRP problem — it's unrelated to HSRP itself, just a general
+  IOS console-management tool useful whenever debug/syslog output is
+  making a terminal session hard to read.
+  Real world: exactly the kind of small, practical habit experienced
+  engineers use constantly during live troubleshooting sessions,
+  especially on a device that's actively logging a recurring error —
+  worth remembering as a general technique, not something specific to
+  HSRP.
+
+==================================================
+END OF LAB
+==================================================

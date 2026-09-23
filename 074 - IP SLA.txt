@@ -1,0 +1,272 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 074 - IP SLA
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure IP SLA (Service Level Agreement) — specifically the ICMP echo
+operation, the only IP SLA operation type required for the CCNA — on
+R1, sending regular pings to R2 and tracking success/failure counts and
+round-trip time over time. Test it by shutting down R2's interface
+mid-operation and observing the resulting failures, then re-enabling it
+and confirming recovery.
+
+Note: like the earlier MLPPP/PPPoE labs, this lab uses **GNS3, not
+Packet Tracer**, since Packet Tracer doesn't support IP SLA. IOS images
+are sourced separately by the user, as with the other GNS3 labs in this
+series.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+   12.0.0.1        12.0.0.2   +--------+
+  |   R1   |--------------------------------|   R2   |
+  +--------+     (directly connected link)   +--------+
+
+  R1 runs an IP SLA ICMP echo operation targeting R2's address
+  (12.0.0.2), sending pings every 5 seconds indefinitely.
+
+A simple two-router, directly-connected topology — R1 is configured to
+continuously ping R2 as an IP SLA operation, tracking the results over
+time rather than as a single one-off `ping` command.
+
+==================================================
+STEP 1 - CONFIGURE THE IP SLA ICMP ECHO OPERATION
+==================================================
+
+IP SLA configuration has two distinct parts: defining the operation
+itself, and separately scheduling it to actually run.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ip sla 1                                    Enters IP SLA configuration mode for
+                                            operation number 1 — a number is
+                                            required since a single device can
+                                            run multiple independent IP SLA
+                                            operations simultaneously, each
+                                            needing its own identifier.
+ icmp-echo 12.0.0.2                          Selects the ICMP echo operation type
+                                            (there are other IP SLA operation
+                                            types available, but ICMP echo — i.e.
+                                            regular ping — is the only one
+                                            required for the CCNA) and specifies
+                                            the destination address to ping —
+                                            R2's interface, 12.0.0.2. This
+                                            enters IP SLA ICMP echo
+                                            configuration mode.
+ frequency 5                                 Sets how often the pings are sent —
+                                            per this lab's instructions, every 5
+                                            seconds.
+
+==================================================
+STEP 2 - SCHEDULE THE OPERATION
+==================================================
+
+Configuring the operation alone isn't enough — it must also be
+scheduled to actually start running. This is done separately, back in
+global configuration mode.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+exit
+ip sla schedule 1 start-time now life       Schedules operation 1 to start
+ forever                                    immediately (`start-time now` — as
+                                            opposed to, for example, starting
+                                            after a delay or at a specific clock
+                                            time) and continue running
+                                            indefinitely (`life forever` — as
+                                            opposed to running for a fixed
+                                            duration), per this lab's
+                                            instructions to run until manually
+                                            stopped.
+
+==================================================
+STEP 3 - VERIFY THE CONFIGURATION AND OBSERVE RESULTS
+==================================================
+
+---------------- R1 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip sla configuration    Confirms entry 1: type ICMP echo, target
+                             12.0.0.2, frequency 5, start time already passed
+                             (since it was scheduled to start immediately),
+                             life forever.
+show ip sla statistics        Shows the running success count. Running this
+                             command again a few seconds later shows the
+                             success count has increased further, since a
+                             new ping is sent every 5 seconds. Also shows the
+                             "Latest RTT" (round-trip time) — how long the
+                             most recent ping took to reach R2 and return.
+
+==================================================
+STEP 4 - SIMULATE A FAILURE AND OBSERVE IP SLA DETECT IT
+==================================================
+
+---------------- R2 ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/0
+ shutdown                    Administratively disables R2's interface,
+                             simulating a link/device failure.
+
+---------------- R1 (after waiting ~10 seconds for a few pings to be attempted) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip sla statistics   The failure count has started increasing, and "Latest
+                         RTT" now reports something like "NoConnection/Busy/
+                         Timeout" instead of a normal round-trip time value —
+                         confirming IP SLA correctly detected the ping failures
+                         caused by R2's interface being down.
+
+---------------- R2 ----------------
+
+Command                Explanation
+-----------------------------------------------------------------------------------------
+no shutdown              Re-enables the interface, restoring connectivity.
+
+---------------- R1 (after waiting ~10 seconds again) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip sla statistics   The success count has resumed increasing, and "Latest
+                         RTT" shows a normal round-trip time value again —
+                         confirming IP SLA correctly detected the recovery.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip sla configuration                        Shows a configured operation's
+                                                  type, target, frequency,
+                                                  scheduled start time, and
+                                                  life setting.
+show ip sla statistics                            Shows running success/
+                                                  failure counts and the most
+                                                  recent round-trip time — the
+                                                  primary command for observing
+                                                  an IP SLA operation's ongoing
+                                                  results.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured an IP SLA ICMP echo operation (operation 1) on R1,
+  targeting R2 (12.0.0.2), sending pings every 5 seconds
+  (`frequency 5`).
+✓ Scheduled the operation to start immediately and run indefinitely
+  (`ip sla schedule 1 start-time now life forever`) — a distinct,
+  required second configuration step beyond defining the operation
+  itself.
+✓ Verified the running operation via `show ip sla configuration` and
+  `show ip sla statistics`, observing increasing success counts and
+  round-trip time values over successive checks.
+✓ Simulated a failure by shutting down R2's interface, observed the
+  failure count increase and "Latest RTT" report a timeout/no-
+  connection status, then re-enabled the interface and confirmed
+  success counts and normal RTT values resumed.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• IP SLA (Service Level Agreement) — a Cisco IOS feature for measuring
+  and tracking network performance/availability metrics over time
+  (rather than as a single manual check), named after the concept of an
+  SLA — a formal agreement between a service provider and client
+  guaranteeing some measurable standard, like latency or throughput.
+• ICMP echo operation — the specific IP SLA operation type required for
+  the CCNA; essentially an automated, scheduled, ongoing ping, with
+  results (success/failure counts, round-trip time) tracked and
+  queryable at any time, rather than a single one-off `ping` command's
+  immediate output.
+• Two-part IP SLA configuration — defining the operation itself
+  (`ip sla <n>`, then the operation type and its settings like
+  `icmp-echo <target>` and `frequency <seconds>`) is separate from
+  SCHEDULING it (`ip sla schedule <n> start-time <when> life
+  <duration>`, in global configuration mode) — both steps are required
+  before the operation actually starts running.
+• `start-time now` / `life forever` — common scheduling choices: start
+  immediately rather than at a delay or specific clock time, and run
+  indefinitely rather than for a fixed duration, until manually removed.
+• `show ip sla statistics` as an ongoing monitoring tool — unlike a
+  single `ping` command's one-time result, this command reflects an
+  accumulating history (success/failure counts) and the most recent
+  round-trip time, letting you observe network health changes over time
+  by re-running the same command repeatedly.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured an IP SLA ICMP echo operation on R1 (targeting
+R2 at 12.0.0.2, every 5 seconds, scheduled to start immediately and run
+forever), verified it via `show ip sla configuration` and `show ip sla
+statistics`, and confirmed it correctly detected both a simulated
+failure (R2's interface shut down, producing increasing failure counts
+and a timeout status) and the subsequent recovery (interface
+re-enabled, success counts and normal RTT values resuming).
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+IP SLA's two-step configuration (define, then schedule)
+  A configured operation does nothing at all until it's also scheduled.
+  Exam: memorize both required commands — `ip sla <n>` (with the
+  operation type/target/frequency inside it) AND `ip sla schedule <n>
+  start-time ... life ...` — a common exam trap is describing a
+  seemingly-complete IP SLA configuration missing the schedule step
+  entirely.
+  Real world: this two-step design mirrors a genuinely common IOS
+  pattern (define an object, then separately activate/schedule it) —
+  recognizing this pattern helps when encountering similarly-structured
+  features elsewhere in IOS.
+
+ICMP echo as the CCNA-relevant IP SLA operation
+  Many IP SLA operation types exist (UDP jitter, HTTP, DNS, TCP
+  connect, and more), but ICMP echo is explicitly the only one CCNA
+  candidates need.
+  Exam: don't over-invest study time in IP SLA's more advanced
+  operation types beyond ICMP echo for CCNA purposes — this lab's own
+  framing (and Cisco's official exam topics) scope it specifically to
+  ICMP echo.
+  Real world: ICMP echo is also genuinely the most commonly deployed
+  IP SLA operation type in real networks for basic reachability/latency
+  monitoring, even though more specialized operation types exist for
+  more specific service-quality measurements.
+
+`show ip sla statistics` for ongoing health monitoring
+  Distinct from a single `ping` — accumulates results over the
+  operation's entire run, queryable at any time.
+  Exam: know this command reports both cumulative counts (successes/
+  failures) and the most recent round-trip time — a scenario question
+  might ask you to interpret specific `show ip sla statistics` output,
+  including recognizing a "Timeout"/"NoConnection" status as
+  indicating a currently-failing target.
+  Real world: real network operations teams commonly wire IP SLA
+  results into monitoring/alerting systems (via SNMP traps triggered by
+  IP SLA thresholds) — this lab's manual `show ip sla statistics`
+  checks are a hands-on version of what's normally automated in
+  production.
+
+==================================================
+END OF LAB
+==================================================

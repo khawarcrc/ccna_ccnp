@@ -1,0 +1,352 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 047 - VTP / VLAN Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot three deliberately-introduced misconfigurations — one per
+switch — on the exact same three-switch VTP topology built in Lab 046
+(VTP). Confirm the scope of the connectivity problem first, then
+isolate and fix each fault (a trunk left in access mode, an access
+port assigned to the wrong VLAN, and a VTP domain name typo) one at a
+time, re-testing after each fix.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 046 (VTP) — SW1 (VTP server, domain CCNA) at one
+end, SW3 (VTP client) at the other, SW2 (VTP transparent) relaying
+between them. See
+[vtp_vlan_trunking_protocol.txt](vtp_vlan_trunking_protocol.txt) for
+the full topology diagram and IP addressing table (PC1/PC2 + PC8 on
+SW1; PC3/PC4 on SW2 [VLAN 40, local]; PC5 + PC6/PC7 + PC9 on SW3).
+Nothing physically changed from Lab 046 — three specific configuration
+lines were altered (one per switch) to introduce the faults below.
+
+==================================================
+STEP 1 - CONFIRM THE SCOPE OF THE PROBLEM
+==================================================
+
+Before touching any configuration, the standard troubleshooting
+approach is to first confirm exactly what is and isn't working.
+
+---------------- PC1 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.0.2        Succeeds — PC1 to PC2, both in VLAN 10 AND on the same
+                     switch (SW1).
+ping 10.0.0.5        Fails — PC1 to PC5, both in VLAN 10 but on different
+                     switches (SW1 and SW3).
+
+---------------- PC8 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 20.0.0.9        Fails — PC8 to PC9, both in VLAN 20 but on different
+                     switches (SW1 and SW3).
+
+---------------- PC6 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 30.0.0.7        Fails — PC6 to PC7, both in VLAN 30 AND on the same
+                     switch (SW3).
+
+---------------- PC3 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 40.0.0.4        Fails — PC3 to PC4, both in VLAN 40 AND on the same
+                     switch (SW2).
+
+Summary of the scope: PC1-PC2 (same switch, VLAN 10) is the only pair
+that works. Every other pair fails — including two pairs (PC6/PC7 and
+PC3/PC4) that don't even need a trunk, since both ends sit on the same
+switch. This tells us there isn't just one single root cause — multiple
+independent problems exist, one per switch, and each is investigated in
+turn.
+
+==================================================
+STEP 2 - SW1: TRUNK LEFT IN ACCESS MODE
+==================================================
+
+Working on the VLAN 10 problem first, starting at SW1.
+
+---------------- Diagnose (SW1) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show vlan brief          The VLANs themselves and their access-port assignments
+                        all look correct at first glance — but GigabitEthernet0/1
+                        (which should be the trunk to SW2) is listed under the
+                        default VLAN 1, meaning it's currently an access port,
+                        not a trunk.
+show interfaces trunk    Confirms no trunk is currently active on SW1 at all.
+show run                 Confirms G0/1 is explicitly configured in access mode.
+
+---------------- Fix (SW1) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1
+ switchport mode trunk              Restores trunk mode on SW1's link to SW2.
+exit
+
+---------------- Verify (SW1) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show interfaces trunk       Confirms G0/1 is now an active trunk.
+ping 10.0.0.5 (from PC1)     Still fails — SW1's trunk was one problem, but not
+                            the only one blocking VLAN 10 connectivity; more
+                            fixes are still needed elsewhere (see Step 4).
+
+==================================================
+STEP 3 - SW2: WRONG VLAN ON AN ACCESS PORT
+==================================================
+
+This fault happens to not be one of the problems on the original
+troubleshooting list for VLAN 10, but is discovered incidentally while
+checking SW2, and turns out to explain the VLAN 40 failure.
+
+---------------- Diagnose (SW2) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show vlan brief          SW2's trunk ports (G0/1, G0/2) correctly don't appear
+                        under any VLAN (as expected for trunks). However, F0/1
+                        and F0/2 are both supposed to be in VLAN 40 — instead,
+                        F0/2 is shown assigned to a VLAN 50, which shouldn't
+                        exist in this topology at all.
+
+---------------- Fix (SW2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface FastEthernet0/2
+ switchport access vlan 40          Moves the port to the correct VLAN (40).
+exit
+no vlan 50                          Deletes the erroneous VLAN 50 entirely, since
+                                    it should never have existed in this topology.
+
+---------------- Verify (SW2) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show vlan brief             Confirms VLAN 50 is gone and F0/2 now shows under
+                            VLAN 40 alongside F0/1.
+ping 40.0.0.4 (from PC3)     Succeeds — this fully resolves the VLAN 40 problem,
+                            even though it was found while investigating a
+                            different (VLAN 10) issue.
+
+==================================================
+STEP 4 - SW3: WRONG VTP DOMAIN NAME
+==================================================
+
+---------------- Diagnose (SW3) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show vlan brief          VLANs 10, 20, and 30 don't exist on SW3 at all.
+show run                 Confirms F0/1, F0/2-3, and F0/4 are still correctly
+                        assigned to VLANs 10, 30, and 20 respectively — the
+                        port assignments themselves survived, meaning the
+                        VLANs must have been deleted (or never synced)
+                        afterward, not that the ports were reconfigured.
+configure terminal
+vlan 10                  Attempting to manually re-create VLAN 10 directly on
+                        SW3 fails/is rejected — SW3 is a VTP client, and
+                        clients cannot create or delete VLANs locally. This is
+                        the clue that the real problem is with VTP itself, not
+                        the VLAN database directly.
+show vtp status          Reveals the actual fault: SW3 is in VTP domain
+                        "ccnp" — it's supposed to be "CCNA". Being in the
+                        wrong domain means SW3 ignores VTP advertisements
+                        coming from SW1 (relayed through SW2), so it never
+                        received (or lost sync with) VLANs 10/20/30.
+
+---------------- Fix (SW3) ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+vtp domain CCNA             Corrects SW3's VTP domain name to match SW1 and
+                            SW2, allowing it to rejoin the correct VTP domain.
+
+---------------- Verify (SW3) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show vtp status              Confirms the domain is now correctly "CCNA".
+show vlan brief               VLANs 10, 20, and 30 are back, synced down from
+                              SW1 via SW2 — confirming VTP client sync resumed
+                              correctly once the domain name matched.
+
+==================================================
+STEP 5 - RE-VERIFY ALL CONNECTIVITY
+==================================================
+
+---------------- PC1 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.0.5        Succeeds now — PC1 to PC5, VLAN 10 across SW1 and SW3.
+
+---------------- PC8 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 20.0.0.9        Succeeds now — PC8 to PC9, VLAN 20 across SW1 and SW3.
+
+---------------- PC6 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 30.0.0.7        Succeeds now — PC6 to PC7, VLAN 30, same switch (SW3);
+                     this was never actually broken by a VLAN 30-specific
+                     fault, but depended on SW3 having its VLAN database
+                     (and therefore VLAN 30 itself) restored in Step 4.
+
+All connectivity across every VLAN and both switch pairs is now
+restored.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show vlan brief                                  Confirms VLAN existence and
+                                                  correct port assignments on a
+                                                  given switch.
+show interfaces trunk                            Confirms which ports are
+                                                  actually active trunks.
+show vtp status                                  Confirms a switch's VTP mode,
+                                                  domain name, and version — the
+                                                  fastest way to spot a domain
+                                                  mismatch.
+show running-config                              General-purpose command for
+                                                  spotting any misconfigured
+                                                  interface across the topology.
+ping <destination>                                Verify end-to-end reachability,
+                                                  re-run after every fix.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Confirmed the scope of the problem first: only same-switch, same-VLAN
+  pings worked; every cross-switch pair and even two same-switch pairs
+  (VLAN 30 and VLAN 40) were failing, indicating multiple independent
+  faults rather than one root cause.
+✓ Found and fixed SW1's G0/1 (trunk to SW2) left in access mode instead
+  of trunk mode.
+✓ Found and fixed SW2's F0/2 assigned to a nonexistent VLAN 50 instead
+  of VLAN 40, and deleted the erroneous VLAN 50 — discovered while
+  investigating a different problem, but it resolved the VLAN 40
+  failure.
+✓ Found and fixed SW3's VTP domain name set to "ccnp" instead of
+  "CCNA", which had silently desynced it from SW1's VLAN database
+  (VLANs 10, 20, 30 were all missing on SW3 as a result).
+✓ Re-verified all connectivity across every VLAN and both cross-switch
+  pairs succeeded after all three fixes were applied.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Troubleshooting methodology — confirm the full scope of a problem
+  before making any changes (test every affected pair, not just the
+  first failure found), since multiple independent faults can coexist
+  and only testing broadly reveals that; this lab specifically
+  demonstrates that assuming "one root cause" would have led to
+  stopping after the first (SW1 trunk) fix, missing two more real
+  problems.
+• A trunk silently reverted to access mode — `show vlan brief` listing
+  an inter-switch link under VLAN 1 (the default VLAN) rather than not
+  appearing at all is the telltale sign a port that should be a trunk
+  is actually in access mode.
+• VTP client VLAN-creation restriction as a diagnostic clue — a VTP
+  client rejecting a manual `vlan <id>` creation attempt isn't just an
+  obstacle, it's informative: it confirms the switch genuinely is a VTP
+  client (ruling out a VTP-mode misconfiguration) and redirects
+  troubleshooting toward the VTP synchronization itself (domain name,
+  version, or the server/relay path) rather than the VLAN database
+  directly.
+• VTP domain name mismatch as a silent failure — a switch in the wrong
+  VTP domain doesn't produce an error; it simply never receives (or
+  loses) VLAN updates from switches in the correct domain, since VTP
+  advertisements are scoped to a domain name and ignored outside it.
+• Faults can be found "along the way" — the SW2 VLAN 50 issue was
+  discovered while investigating an unrelated VLAN 10 problem, a
+  reminder that thorough `show vlan brief`/`show running-config` checks
+  on every device in scope are worthwhile even once the specific fault
+  being searched for is found elsewhere.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and resolved three independent misconfigurations
+across the three-switch VTP topology from Lab 046: SW1's trunk to SW2
+left in access mode, SW2's F0/2 assigned to a nonexistent VLAN 50
+instead of VLAN 40, and SW3's VTP domain name set to "ccnp" instead of
+"CCNA" (which had desynced its entire VLAN database from the VTP
+server). All connectivity — same-VLAN same-switch, same-VLAN
+cross-switch, and the two single-switch-local VLANs — was confirmed
+working after all three fixes.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Confirm scope before assuming one root cause
+  Testing every affected pair up front revealed the problem wasn't
+  singular — VLAN 30 and VLAN 40 were broken even though they never
+  cross a trunk.
+  Exam: expect multi-fault troubleshooting scenarios specifically
+  designed to punish "fix the first thing you find and assume you're
+  done" — always re-test the FULL original symptom list after each fix,
+  not just the specific ping that prompted it.
+  Real world: this is standard operating discipline in real network
+  troubleshooting — closing a ticket after the first fix without
+  re-checking every originally-reported symptom is exactly how "it's
+  still broken" re-opens happen.
+
+A trunk silently reverted to (or left in) access mode
+  Shows up in `show vlan brief` under VLAN 1 instead of being absent
+  from the VLAN listing entirely.
+  Exam: know this specific tell — a link expected to be a trunk
+  appearing under a VLAN in `show vlan brief` output is one of the
+  fastest ways to spot this class of fault without reading through the
+  full running-config.
+  Real world: this happens in practice after an interface is reset,
+  replaced, or its config accidentally overwritten (e.g. a copy-paste
+  of the wrong interface's config) — `show vlan brief` and
+  `show interfaces trunk` together are a fast first check whenever an
+  inter-switch link "isn't working."
+
+VTP domain name typo causing silent desync
+  A one-character domain name mismatch (ccnp vs. CCNA) breaks VTP sync
+  with zero error message — the client simply stops updating.
+  Exam: know that VTP domain names ARE case-sensitive and must match
+  exactly, and that a client in the wrong domain does not generate an
+  alarm — its VLAN database just silently stops matching the server's.
+  Real world: this is a genuine, well-known real-world VTP gotcha —
+  because there's no obvious error, "VLANs randomly missing on one
+  switch" is a classic symptom experienced engineers immediately check
+  `show vtp status` for, specifically looking at the domain name field.
+
+==================================================
+END OF LAB
+==================================================

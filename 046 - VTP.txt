@@ -1,0 +1,407 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 046 - VTP (VLAN Trunking Protocol)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure VTP (VLAN Trunking Protocol) across three switches to
+propagate VLAN configuration from a single VTP server instead of
+manually creating identical VLANs on every switch. Configure SW1 as a
+VTP server, SW2 as VTP transparent, and SW3 as a VTP client, all in
+domain "CCNA" running VTP version 2. Assign every access port to its
+correct VLAN, and finish by restricting each trunk's allowed VLANs to
+only the ones that actually need to cross it.
+
+==================================================
+TOPOLOGY
+==================================================
+
+ VLAN10         VLAN20                VLAN40 (local            VLAN10   VLAN30           VLAN20
+10.0.0.0/24    20.0.0.0/24            to SW2 only)             10.0.0.0/24 30.0.0.0/24    20.0.0.0/24
++------+------+  +------+        +------------+------------+   +------+  +------+------+  +------+
+| PC1  | PC2  |  | PC8  |        |    PC3     |    PC4     |   | PC5  |  | PC6  | PC7  |  | PC9  |
++--+---+--+---+  +--+---+        +-----+------+-----+------+   +--+---+  +--+---+--+---+  +--+---+
+  F0/1    F0/2      F0/3            F0/1              F0/2       F0/1      F0/2    F0/3      F0/4
+    \      |          /                \                /          \         \      /          /
+     +-----+----------+                 +--------------+            +---------+-----+----------+
+           |                                   |                                |
+      +----+----+     G0/1 (trunk)        +----+----+     G0/1 (trunk)     +----+----+
+      |   SW1   |------------------------ |   SW2   |------------------- -|   SW3   |
+      |   VTP   |     allowed VLAN        |   VTP   |     allowed VLAN    |   VTP   |
+      | SERVER  |      1, 10, 20          |TRANSPARENT|      1, 10, 20    | CLIENT  |
+      +---------+                         +---------+                    +---------+
+   domain CCNA, v2                     domain CCNA, v2                domain CCNA, v2
+   creates VLANs 10/20/30            creates local VLAN 40         VLANs 10/20/30 synced
+   (HR/Sales/Engineering)          (Accounting) - not synced        automatically from SW1
+                                    to server, only relayed              via SW2
+
+SW1 (VTP server) sits at one end of a three-switch chain, SW3 (VTP
+client) at the other, with SW2 (VTP transparent) in the middle relaying
+VTP advertisements between them without adopting them itself. PC1/PC2
+(VLAN 10) and PC8 (VLAN 20) connect to SW1; PC3/PC4 (VLAN 40, local to
+SW2 only) connect to SW2; PC5 (VLAN 10), PC6/PC7 (VLAN 30), and PC9
+(VLAN 20) connect to SW3. VLANs 10 and 20 exist on both SW1 and SW3, so
+they must cross both trunks — VLANs 30 and 40 each live entirely on one
+switch and never need to cross a trunk at all, which is exactly why the
+final allowed-VLAN restriction (1, 10, 20 only) doesn't break anything.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device   VLAN   Switch/Port     IP Address      Notes
+----------------------------------------------------------------------------------
+PC1      10     SW1 F0/1        10.0.0.1        HR
+PC2      10     SW1 F0/2        10.0.0.2        HR
+PC8      20     SW1 F0/3        20.0.0.8        Sales
+PC3      40     SW2 F0/1        40.0.0.3        Accounting (local to SW2)
+PC4      40     SW2 F0/2        40.0.0.4        Accounting (local to SW2)
+PC5      10     SW3 F0/1        10.0.0.5        HR
+PC6      30     SW3 F0/2        30.0.0.6        Engineering
+PC7      30     SW3 F0/3        30.0.0.7        Engineering
+PC9      20     SW3 F0/4        20.0.0.9        Sales
+
+VLANs: 10 = HR, 20 = Sales, 30 = Engineering (all created on SW1, the
+VTP server), 40 = Accounting (created locally on SW2, VTP transparent).
+
+==================================================
+STEP 1 - CONFIGURE INTER-SWITCH TRUNKS, DTP DISABLED
+==================================================
+
+---------------- SW1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/1        Trunk link to SW2.
+ switchport mode trunk
+ switchport nonegotiate
+exit
+
+---------------- SW2 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface range GigabitEthernet0/1-2  Trunk links: G0/1 to SW1, G0/2 to SW3.
+ switchport mode trunk
+ switchport nonegotiate
+exit
+
+---------------- SW3 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/1        Trunk link to SW2.
+ switchport mode trunk
+ switchport nonegotiate
+exit
+
+==================================================
+STEP 2 - CONFIGURE SW2 AS VTP TRANSPARENT AND CREATE ITS LOCAL VLAN
+==================================================
+
+VTP has three modes: **server** (can create/delete VLANs and
+advertises them to other switches), **client** (cannot create/delete
+VLANs, only synchronizes what a server advertises), and
+**transparent** (does not synchronize VLANs from a server at all, but
+still forwards/relays VTP advertisement frames between other switches
+— and can create its own purely local VLANs).
+
+---------------- SW2 ----------------
+
+Command                        Explanation
+-----------------------------------------------------------------------------------------
+vtp mode transparent            Configures SW2 as VTP transparent — it will
+                                relay VTP messages between SW1 and SW3 without
+                                adopting SW1's advertised VLANs itself.
+vtp domain CCNA                 Sets the VTP domain name.
+vtp version 2                   Sets VTP version 2 (Cisco recommends avoiding
+                                version 1 where possible).
+vlan 40
+ name accounting                Creates VLAN 40 locally on SW2 — since SW2 is
+                                transparent, this VLAN is NOT advertised to or
+                                synced with SW1/SW3, it exists only on SW2.
+exit
+show vlan brief                 Confirms VLAN 40 ("accounting") now exists on
+                                SW2.
+
+==================================================
+STEP 3 - CONFIGURE SW1 AS THE VTP SERVER AND CREATE THE SHARED VLANs
+==================================================
+
+---------------- SW1 ----------------
+
+Command                        Explanation
+-----------------------------------------------------------------------------------------
+vtp domain CCNA
+vtp version 2
+vtp mode server                 Explicitly sets server mode — this is actually
+                                the default VTP mode, but set explicitly here.
+vlan 10
+ name HR
+vlan 20
+ name sales
+vlan 30
+ name engineering
+exit
+
+==================================================
+STEP 4 - CONFIGURE SW3 AS A VTP CLIENT AND OBSERVE AUTOMATIC SYNC
+==================================================
+
+---------------- SW3 ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+vtp mode client              Configures SW3 as a VTP client.
+show vtp status              Notice VTP version 2 and domain name "CCNA" are
+                             already populated, without ever configuring them
+                             directly on SW3 — a VTP switch with the default
+                             null domain name automatically adopts the domain
+                             name of the first VTP advertisement it receives
+                             from another domain; likewise, a version 1 switch
+                             that receives a message from a version 2 switch
+                             will automatically switch to version 2, if
+                             supported.
+
+==================================================
+STEP 5 - ASSIGN EVERY ACCESS PORT TO ITS VLAN AND DISABLE DTP
+==================================================
+
+---------------- SW3 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface FastEthernet0/1           PC5's port.
+ switchport mode access
+ switchport access vlan 10
+ switchport nonegotiate
+interface range FastEthernet0/2-3   PC6/PC7's ports.
+ switchport mode access
+ switchport access vlan 30
+ switchport nonegotiate
+interface FastEthernet0/4           PC9's port.
+ switchport mode access
+ switchport access vlan 20
+ switchport nonegotiate
+
+---------------- SW2 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface range FastEthernet0/1-2   PC3/PC4's ports.
+ switchport mode access
+ switchport access vlan 40
+ switchport nonegotiate
+
+---------------- SW1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface range FastEthernet0/1-2   PC1/PC2's ports.
+ switchport mode access
+ switchport access vlan 10
+ switchport nonegotiate
+interface FastEthernet0/3           PC8's port.
+ switchport mode access
+ switchport access vlan 20
+ switchport nonegotiate
+
+==================================================
+STEP 6 - RESTRICT TRUNKS TO ONLY THE ALLOWED VLANs (1, 10, 20)
+==================================================
+
+---------------- SW1 (demonstration of the allowed-VLAN syntax) ----------------
+
+Command                                    Result / Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/1
+ switchport trunk allowed vlan ?             Reviews the available keywords.
+ switchport trunk allowed vlan 1,2,3,4       Sets the allowed list to exactly
+show interfaces trunk                        1,2,3,4 — confirmed in the output.
+ switchport trunk allowed vlan 5,6,7,8       Entering a new plain list REPLACES the
+show interfaces trunk                        previous one entirely — now 5-8.
+ switchport trunk allowed vlan add 9         `add` appends to the current list —
+show interfaces trunk                        now 5-9.
+ switchport trunk allowed vlan remove 9      `remove` removes from the current
+show interfaces trunk                        list — back to 5-8.
+ switchport trunk allowed vlan all           `all` allows every VLAN (1-1005) —
+show interfaces trunk                        confirmed as the full range.
+ switchport trunk allowed vlan none          `none` allows no VLANs at all —
+show interfaces trunk                        confirmed as an empty list.
+ switchport trunk allowed vlan except 2      `except` allows every VLAN EXCEPT the
+show interfaces trunk                        one(s) listed — confirmed as 1,
+                                             3-1005.
+
+---------------- SW1 (the actual configuration for this lab) ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+switchport trunk allowed vlan 1,10,20             Restricts SW1's trunk to only
+                                                  forward VLANs 1 (default), 10
+                                                  (HR), and 20 (Sales) — the only
+                                                  VLANs that actually need to reach
+                                                  another switch.
+
+---------------- SW2 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+interface range GigabitEthernet0/1-2
+ switchport trunk allowed vlan 1,10,20            Applies the same restriction to
+                                                  both of SW2's trunks.
+
+---------------- SW3 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/1
+ switchport trunk allowed vlan 1,10,20            Applies the same restriction on
+                                                  SW3's trunk.
+
+VLAN 30 (local to SW3 only) and VLAN 40 (local to SW2 only) are
+deliberately left off every trunk's allowed list — since neither VLAN
+has members on more than one switch, neither needs to cross a trunk at
+all, so restricting the trunks this way causes no connectivity loss.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show vtp status                                  Confirms a switch's VTP mode,
+                                                  domain name, and version.
+show vlan brief                                  Lists VLANs and their assigned
+                                                  access ports on a given switch.
+show interfaces trunk                            Lists active trunk ports and,
+                                                  critically, each trunk's current
+                                                  allowed-VLAN list.
+show running-config                              Verify trunk, VTP, and access-port
+                                                  configuration end to end.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured trunk links between all three switches (SW1-SW2, SW2-SW3)
+  with DTP disabled and trunk mode set manually.
+✓ Configured SW2 as VTP transparent (domain CCNA, version 2) and
+  created a local-only VLAN 40 ("accounting") that is not synced to
+  either neighboring switch.
+✓ Configured SW1 as the VTP server (domain CCNA, version 2) and created
+  VLANs 10 (HR), 20 (Sales), and 30 (Engineering).
+✓ Configured SW3 as a VTP client and confirmed it automatically adopted
+  the VTP domain name and version from SW1's advertisements (relayed
+  through SW2) without any of that being configured directly on SW3,
+  and that VLANs 10/20/30 synced down to it.
+✓ Assigned every PC-facing access port on all three switches to its
+  correct VLAN and disabled DTP on each.
+✓ Demonstrated the full `switchport trunk allowed vlan` syntax
+  (a plain list, `add`, `remove`, `all`, `none`, `except`) before
+  applying the final restriction — `1,10,20` — to every trunk in the
+  topology, correctly excluding the two single-switch-local VLANs.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• VTP (VLAN Trunking Protocol) — a Cisco protocol that propagates VLAN
+  configuration (VLAN IDs and names) across multiple switches within
+  the same VTP domain, so VLANs only need to be created/deleted on one
+  switch (a server) instead of individually on every switch.
+• VTP server mode — can create, modify, and delete VLANs, and
+  advertises those changes to other switches in the same domain; the
+  default VTP mode on most switches.
+• VTP client mode — cannot create, modify, or delete VLANs locally;
+  instead it synchronizes whatever VLAN database a VTP server in its
+  domain advertises.
+• VTP transparent mode — neither creates/advertises VLANs to be synced
+  by others, nor syncs VLANs from a server itself; however, it still
+  forwards (relays) VTP advertisement frames it receives, allowing a
+  transparent switch to sit between a server and client without
+  breaking VTP synchronization between them. A transparent switch can
+  still create VLANs, but they remain purely local to it.
+• VTP domain name and version auto-adoption — a switch with the default
+  (null) VTP domain name automatically joins the domain name carried in
+  the first VTP advertisement it receives; similarly, a VTP version 1
+  switch that receives an advertisement from a version 2 switch will
+  automatically upgrade itself to version 2, if the platform supports
+  it.
+• `switchport trunk allowed vlan` syntax — a plain VLAN list (e.g.
+  `1,2,3`) REPLACES the entire current allowed list; `add`/`remove`
+  modify the existing list incrementally; `all` allows every VLAN;
+  `none` allows no VLANs; `except` allows every VLAN except the ones
+  specified. Restricting a trunk's allowed VLANs to only what's
+  actually needed limits unnecessary broadcast traffic and reduces
+  the security exposure of VLANs that don't need to be reachable
+  across that link.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured a three-switch VTP hierarchy — SW1 as server,
+SW2 as transparent, SW3 as client, all in domain "CCNA" running VTP
+version 2 — and confirmed VLANs 10/20/30 created on SW1 propagated
+correctly through transparent SW2 down to client SW3, while SW2's own
+locally-created VLAN 40 stayed local as expected. Assigned every access
+port to its correct VLAN across all three switches and finished by
+restricting every trunk's allowed-VLAN list to exactly 1, 10, and 20 —
+the only VLANs that actually span more than one switch.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+VTP server / client / transparent modes
+  Server creates and advertises; client only receives; transparent
+  relays without adopting, and can hold local-only VLANs.
+  Exam: a very frequently tested distinction — know specifically that
+  transparent mode still passes VTP advertisements through (unlike a
+  switch that isn't running VTP at all, or is in a different domain,
+  which would break the chain), even though it doesn't adopt them.
+  Real world: transparent mode is genuinely useful for a switch that
+  needs its own unique local VLANs (e.g. a switch serving a department
+  with special network needs) while still sitting in the physical path
+  between other switches that do need to share a VTP domain.
+
+VTP domain name / version auto-adoption on a "blank" switch
+  A switch with no VTP domain configured silently joins whatever domain
+  it first hears advertised.
+  Exam: this is also a real risk worth knowing for the exam AND in
+  practice — a brand-new switch with default VTP settings dropped into
+  an existing network can be silently absorbed into an unintended VTP
+  domain and, in VTP v1/v2 server mode with a higher revision number,
+  could even overwrite the VLAN database of the whole domain (a classic
+  VTP "revision number bomb" incident).
+  Real world: this exact risk is why many real deployments either avoid
+  VTP entirely in favor of manually configured VLANs, or are extremely
+  careful to reset a switch's VTP configuration (`vtp mode transparent`
+  temporarily, or clearing VLAN.dat) before connecting it to a
+  production network.
+
+`switchport trunk allowed vlan`
+  Controls which VLANs are permitted to cross a specific trunk link,
+  independent of which VLANs exist on the switch overall.
+  Exam: know that a plain list REPLACES rather than adds to the
+  existing list — using `add`/`remove` when you meant to set an
+  absolute list (or vice versa) is an easy, commonly-tested mistake.
+  Real world: restricting trunk-allowed VLANs to only what's actually
+  needed on that specific link is standard practice for both broadcast
+  domain hygiene and security — it's a lightweight extra layer that
+  limits the blast radius of a misconfigured or compromised device on
+  one VLAN reaching a link it has no legitimate reason to use.
+
+==================================================
+END OF LAB
+==================================================

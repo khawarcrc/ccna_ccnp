@@ -1,0 +1,407 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 060 - EIGRP for IPv6
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure EIGRP for IPv6 across a five-router network, highlighting the
+same structural difference already seen with OSPFv3: EIGRP for IPv6 is
+activated per-interface rather than via `network` statements. Also
+cover an IPv6-EIGRP-specific quirk (the process defaults to
+administratively shut down and needs an explicit `no shutdown`), mark
+R1's Internet-facing interface passive for security, and advertise a
+default route toward the rest of the network using EIGRP's
+`summary-address` command (since, unlike OSPF, EIGRP has no
+`default-information originate` equivalent).
+
+==================================================
+TOPOLOGY
+==================================================
+
+                              +--------+
+                              | Internet |  (G0/2 on R1 — passive,
+                              +----+-----+   advertises a default route
+                                   |         out to the internal network,
+                                   | G0/2     but forms no EIGRP neighbor)
+                                   |
+  +--------+   G0/0<->G0/0    +---+----+    G0/1<->G0/0    +--------+
+  |   R4   |------------------|   R1   |------------------|   R2   |
+  +---+----+                  +--------+                  +----+---+
+  RID 4.4.4.4                 RID 1.1.1.1                 RID 2.2.2.2
+      |                                                         |
+      | G0/1                                                    | G0/1
+      |                                                         |
+      +---------------------------+-----------------------------+
+                                   |
+                              +----+----+
+                              |   R3    |   RID 3.3.3.3
+                              +----+----+
+                                   |
+                                   | G0/2
+                                   |
+                              +----+----+
+                              |   R5    |   RID 5.5.5.5
+                              +---------+   G0/0
+
+R1, R2, R3, and R4 form a loop (R1-R2, R2-R3, R3-R4, R4-R1), with R5
+hanging off R3 as a single spoke. R1 additionally has a third
+interface, G0/2, representing its connection to the Internet — it has
+no EIGRP neighbor on that link at all, is marked passive (for security
+— EIGRP advertisements shouldn't be sent toward the Internet), and is
+where R1's default-route summary is NOT configured (the default route
+is instead advertised inward, toward R2 and R4, on R1's other two
+interfaces). Loopback0 on each router (1.1.1.1 through 5.5.5.5) serves
+as the EIGRP router ID, exactly as in the IPv4 EIGRP labs — R2, R3, R4,
+and R5's loopbacks were already configured before this lab begins; only
+R1's is configured on-screen.
+
+Note: exact IPv6 addressing on the inter-router links is not clearly
+stated in the source transcript (this lab's focus is the EIGRP
+configuration itself, not IPv6 addressing) — links are assumed
+pre-addressed before this lab begins. The topology SHAPE (which
+interface connects to which router) is confirmed via R1's own `show
+ipv6 route` output later in the lab, which lists exactly the three
+networks R1 does NOT sit directly on (the R2-R3, R3-R4, and R3-R5
+links) as EIGRP-learned — precisely consistent with the loop-plus-spoke
+shape described above.
+
+==================================================
+STEP 1 - CONFIGURE A LOOPBACK ADDRESS (ROUTER ID) ON R1
+==================================================
+
+R2, R3, R4, and R5's loopbacks were already configured before this lab
+(the video notes enough loopback-configuration repetition had already
+been shown in prior labs); only R1's is configured here.
+
+---------------- R1 ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.0        Same rule as EIGRP for IPv4 and OSPFv3:
+                                        even for an IPv6 routing process, the
+                                        router ID is still a 32-bit,
+                                        IPv4-formatted value — it doesn't
+                                        actually need to be a real address in
+                                        use elsewhere, but a loopback is the
+                                        standard, predictable way to set it.
+
+==================================================
+STEP 2 - CONFIGURE EIGRP FOR IPv6 ON R1
+==================================================
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+ipv6 router eigrp 100                       Creates EIGRP for IPv6, AS 100 —
+                                            simply `ipv6` in front of the familiar
+                                            command, same AS-number-must-match
+                                            requirement as IPv4 EIGRP.
+ passive-interface GigabitEthernet0/2        Unlike the usual "make the loopback
+                                            passive" pattern, here it's R1's
+                                            Internet-facing interface (G0/2) that
+                                            needs to be passive — its network is
+                                            still advertised into EIGRP normally,
+                                            but no EIGRP hello/advertisement
+                                            traffic should be sent out toward the
+                                            Internet, for security reasons.
+exit
+interface GigabitEthernet0/0
+ ipv6 eigrp 100                              Activates EIGRP for IPv6, AS 100,
+                                            directly on this interface — this is
+                                            the major structural difference from
+                                            IPv4 EIGRP (no `network` command is
+                                            used at all).
+interface GigabitEthernet0/1
+ ipv6 eigrp 100
+interface GigabitEthernet0/2
+ ipv6 eigrp 100                              Also activated here — being passive
+                                            doesn't mean "not part of EIGRP," it
+                                            means "part of EIGRP, but no hellos
+                                            sent/received here."
+exit
+show run                                     Reveals a surprise: the EIGRP for
+                                            IPv6 process itself shows as
+                                            `shutdown`. EIGRP for IPv6 has an
+                                            administrative shutdown feature (on
+                                            some IOS versions/platforms it
+                                            defaults to shut down, on others it
+                                            may not) — nothing will actually work
+                                            until this is cleared.
+ipv6 router eigrp 100
+ no shutdown                                 Administratively enables the EIGRP
+                                            for IPv6 process.
+
+==================================================
+STEP 3 - CONFIGURE EIGRP FOR IPv6 ON R2, R3, R4, R5
+==================================================
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/0
+ ipv6 eigrp 100                              Activating EIGRP directly on an
+                                            interface, without first explicitly
+                                            running `ipv6 router eigrp 100` in
+                                            global configuration mode, causes IOS
+                                            to automatically create the process —
+                                            same auto-creation behavior seen with
+                                            OSPFv3.
+interface GigabitEthernet0/1
+ ipv6 eigrp 100
+exit
+
+No neighbor adjacency with R1 appears yet — the same shutdown quirk
+applies here too.
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+ipv6 router eigrp 100
+ no shutdown                        Enables the (auto-created) EIGRP for IPv6
+                                    process on R2.
+
+---------------- R3 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ipv6 router eigrp 100
+ no shutdown                        This time entered up front, before
+                                    interface activation.
+interface GigabitEthernet0/0
+ ipv6 eigrp 100
+interface GigabitEthernet0/1
+ ipv6 eigrp 100
+interface GigabitEthernet0/2
+ ipv6 eigrp 100                      R3's three interfaces: to R2, to R4, and
+                                    to R5.
+
+---------------- R4 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ipv6 router eigrp 100
+ no shutdown
+interface GigabitEthernet0/0
+ ipv6 eigrp 100
+interface GigabitEthernet0/1
+ ipv6 eigrp 100                      R4's two interfaces: to R1 and to R3
+                                    (closing the R1-R2-R3-R4 loop).
+
+---------------- R5 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ipv6 router eigrp 100
+interface GigabitEthernet0/0
+ ipv6 eigrp 100                      R5's single interface, to R3 — note `no
+                                    shutdown` wasn't restated here in the
+                                    source, so it may already have applied on
+                                    this router, or should be checked/applied if
+                                    the process still shows shut down.
+
+==================================================
+STEP 4 - VERIFY LEARNED ROUTES (ON R1)
+==================================================
+
+---------------- R1 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ipv6 route          Shows the networks for the R2-R3, R3-R4, and R3-R5 links
+                         (the three segments R1 doesn't sit directly on) learned
+                         via EIGRP — confirming full reachability across the
+                         loop-plus-spoke topology.
+
+==================================================
+STEP 5 - ADVERTISE A DEFAULT ROUTE TOWARD THE INTERNAL NETWORK
+==================================================
+
+EIGRP has no `default-information originate` command the way OSPF
+does. Instead, a default route is advertised as a SUMMARY route
+(`::/0`, which by definition summarizes literally everything) out of
+the specific interfaces that should carry it.
+
+---------------- R1 ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ipv6 summary-address eigrp 100 ::/0                  Advertises a default route
+                                                     (`::/0`, IPv6's equivalent
+                                                     of IPv4's `0.0.0.0/0`) out
+                                                     this interface, toward R4.
+                                                     Same command name/syntax as
+                                                     IPv4 EIGRP summarization,
+                                                     just with `ipv6` instead of
+                                                     `ip` and an IPv6 network.
+interface GigabitEthernet0/1
+ ipv6 summary-address eigrp 100 ::/0                  Same, toward R2 — both of
+                                                     R1's internal-facing
+                                                     interfaces need this, so the
+                                                     default route reaches the
+                                                     network regardless of which
+                                                     direction traffic takes.
+
+G0/2 (the actual Internet-facing interface) deliberately does NOT get
+this command — there's no reason to advertise a default route back out
+toward the Internet itself.
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ipv6 route          The default route appears at the top of R5's routing
+                         table — chosen specifically to check here because if R5
+                         (the farthest router from R1) has it, R2, R3, and R4 are
+                         certain to have it as well.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ipv6 eigrp neighbors                        Confirms EIGRP for IPv6
+                                                  neighbor adjacencies.
+show ipv6 route                                  Shows the IPv6 routing table,
+                                                  including EIGRP-learned
+                                                  routes and the advertised
+                                                  default route.
+show ipv6 protocols                               Shows which interfaces EIGRP
+                                                  for IPv6 is active on.
+show running-config                               Verify `ipv6 eigrp <as>`
+                                                  per-interface activation, `no
+                                                  shutdown` under `ipv6 router
+                                                  eigrp`, passive-interface, and
+                                                  summary-address lines.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured a loopback (router ID) on R1, matching the pre-existing
+  loopbacks on R2-R5.
+✓ Enabled EIGRP for IPv6 (AS 100) directly at the interface level on
+  every router's interfaces (`ipv6 eigrp 100`), rather than via
+  `network` statements — the same structural shift already seen with
+  OSPFv3.
+✓ Marked R1's Internet-facing G0/2 as a passive interface (for
+  security), while still activating EIGRP on it so its own network is
+  advertised.
+✓ Discovered and resolved EIGRP for IPv6's administrative shutdown
+  quirk — the process must be explicitly enabled with `no shutdown`
+  under `ipv6 router eigrp <as>` on every router, something that
+  doesn't apply the same way to EIGRP for IPv4.
+✓ Verified full route learning on R1 across the R1-R2-R3-R4 loop plus
+  the R3-R5 spoke.
+✓ Advertised a default route toward the internal network using
+  `ipv6 summary-address eigrp 100 ::/0` on both of R1's internal-facing
+  interfaces (not its Internet-facing one), and verified it reached R5.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• EIGRP for IPv6 activation model — like OSPFv3, EIGRP for IPv6 is
+  activated directly per-interface (`ipv6 eigrp <as>`), not via
+  `network` statements the way EIGRP for IPv4 is; the AS number
+  requirement (must match across all routers) still applies unchanged.
+• EIGRP for IPv6's administrative shutdown — unlike EIGRP for IPv4, the
+  `ipv6 router eigrp <as>` process can default to administratively shut
+  down (behavior may vary by IOS version/platform) and requires an
+  explicit `no shutdown` before it does anything at all — a
+  genuinely surprising, specifically-IPv6-EIGRP quirk worth remembering
+  for both the exam and real deployments.
+• Passive interface for security on an Internet-facing link — the same
+  `passive-interface` command used to silence loopbacks is applied here
+  for a different reason: preventing EIGRP advertisement/hello traffic
+  from leaking out toward an untrusted external network, while the
+  interface's own network is still advertised internally.
+• No `default-information originate` in EIGRP — EIGRP lacks OSPF's
+  dedicated command for injecting a default route; the equivalent
+  technique is advertising `::/0` (or, for IPv4, `0.0.0.0/0`) as a
+  manual summary address via `ip/ipv6 summary-address eigrp <as>
+  <default-route>` on the interface(s) that should carry it.
+• Directional control of default-route advertisement — configuring the
+  `::/0` summary only on R1's internal-facing interfaces (not its
+  Internet-facing one) demonstrates the same interface-specific
+  directionality already learned with EIGRP's regular
+  `summary-address` command: a summary is only advertised out of the
+  specific interface it's configured on.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured EIGRP for IPv6 (AS 100) across a five-router
+loop-plus-spoke topology (R1-R2-R3-R4 in a loop, R5 spoking off R3, R1
+additionally connected to the Internet via a passive G0/2), activating
+it per-interface on every router, working through EIGRP for IPv6's
+administrative-shutdown quirk with `no shutdown` on each router's
+process, and confirming full inter-router route learning on R1.
+Advertised a default route toward the internal network using
+`ipv6 summary-address eigrp 100 ::/0` on R1's two internal-facing
+interfaces, verified reaching all the way to R5.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+EIGRP for IPv6's shutdown quirk
+  A process that looks fully configured but does nothing until `no
+  shutdown` is applied — genuinely easy to overlook, since regular
+  IPv4 EIGRP has no equivalent requirement.
+  Exam: memorize this specifically as an IPv6-EIGRP-only behavior —
+  don't expect (or add) a `no shutdown` step for IPv4 EIGRP
+  configuration; it's IPv6-specific.
+  Real world: this is a genuine, commonly-reported point of confusion
+  even among experienced engineers moving from IPv4 to IPv6 EIGRP for
+  the first time — always confirm with `show ipv6 eigrp neighbors` (or
+  check `show run` for a lingering `shutdown` line) if a freshly
+  configured EIGRP for IPv6 process seems to be doing nothing.
+
+Passive interface used for security, not just "unused link" hygiene
+  Same command, different underlying reason — keeping routing protocol
+  chatter off an untrusted external link.
+  Exam: recognize `passive-interface` can appear in scenario questions
+  motivated by security (Internet-facing links, DMZ segments) as well
+  as the more familiar "this interface leads nowhere" loopback
+  rationale — both are valid, testable reasons to use the same command.
+  Real world: never advertising internal routing protocol
+  hellos/updates out toward the Internet is a basic, essential security
+  practice — an edge router accidentally running EIGRP/OSPF hellos
+  toward an ISP link would be leaking internal topology information
+  and inviting potential protocol-level attacks from outside.
+
+No `default-information originate` in EIGRP
+  A structural difference from OSPF that trips people moving between
+  the two protocols.
+  Exam: know EIGRP's actual mechanism for a default route —
+  `summary-address` with the "summarize everything" network (`0.0.0.0/0`
+  for IPv4, `::/0` for IPv6) — rather than expecting a dedicated
+  default-route command like OSPF's.
+  Real world: this EIGRP summary-address technique for default routes
+  is genuinely used in real deployments exactly the way this lab
+  demonstrates — commonly on an edge/gateway router summarizing its
+  Internet connectivity inward to the rest of an EIGRP-routed internal
+  network.
+
+==================================================
+END OF LAB
+==================================================

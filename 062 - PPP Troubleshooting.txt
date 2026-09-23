@@ -1,0 +1,363 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 062 - PPP Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot four separate PPP misconfigurations — one per router —
+across an expanded version of Lab 061's topology: two additional
+router/service-provider pairs were added, so R1 and R3 now both
+authenticate using PAP (against SPR1 and SPR3 respectively), while R2
+and R4 both authenticate using CHAP (against SPR2 and SPR4
+respectively). Each pair has exactly one fault preventing PPP from
+coming up.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R1   |----------------------|  SPR1   |   PPP + PAP
+  +--------+   10.0.0.2  10.0.0.1 +---------+
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R2   |----------------------|  SPR2   |   PPP + CHAP
+  +--------+   20.0.0.2  20.0.0.1 +---------+
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R3   |----------------------|  SPR3   |   PPP + PAP
+  +--------+   30.0.0.2  30.0.0.1 +---------+
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R4   |----------------------|  SPR4   |   PPP + CHAP
+  +--------+   40.0.0.2  40.0.0.1 +---------+
+
+Four independent point-to-point serial links, extending Lab 061's
+topology (R1-SPR1 and R2-SPR2) with two more pairs (R3-SPR3, R4-SPR4).
+R1 and R3 both use PPP with PAP; R2 and R4 both use PPP with CHAP. Each
+router has pre-configured static default routes toward its own service
+provider, later used to test end-to-end reachability between R1, R2,
+R3, and R4 across their respective service-provider paths. As in Lab
+061, exact IP addressing is reconstructed illustratively (10/20/30/40
+.0.0.0/24-style addresses matching the audible ping digits) — verify
+against the live Packet Tracer file if exact precision matters.
+
+==================================================
+PROBLEM 1 - R1: MISSING "PPP PAP SENT-USERNAME" COMMAND
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Confirms `encapsulation ppp` is correctly set, but
+                             the interface is up/down.
+show run                     Confirms R1's local `username packet password
+                             tracer` entry (used to verify what SPR1 sends) is
+                             present and correct. However, the command
+                             configuring what R1 itself SENDS to SPR1 — `ppp pap
+                             sent-username Cisco password CCNA` — is missing
+                             entirely.
+
+---------------- Fix (R1) ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface Serial0/0
+ shutdown
+ ppp pap sent-username Cisco password CCNA           Adds the missing command,
+                                                    configuring R1 to send the
+                                                    username/password SPR1 is
+                                                    expecting.
+ no shutdown
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief  Up/up.
+ping 10.0.0.1             Succeeds.
+
+==================================================
+PROBLEM 2 - R3: WRONG AUTHENTICATION PROTOCOL (CHAP INSTEAD OF PAP)
+==================================================
+
+---------------- Diagnose (R3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Correct encapsulation (PPP), but up/down.
+show run                     Confirms R3's local `username CCNA password CCENT`
+                             entry (used to verify what SPR3 sends) is present
+                             and correct, and that R3 IS correctly sending
+                             `username Cisco password CCNP` to SPR3 via `ppp pap
+                             sent-username`. The actual fault is the line above
+                             both of those: R3 has `ppp authentication chap`
+                             configured — but R3 is supposed to be using PAP,
+                             not CHAP, to match SPR3's side.
+
+---------------- Fix (R3) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface Serial0/0
+ shutdown
+ no ppp authentication chap              Removes the wrong authentication
+                                        protocol.
+ ppp authentication pap                  Configures the correct one (PAP),
+                                        matching SPR3's expectations.
+ no shutdown
+
+---------------- Verify (R3) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief  Up/up.
+ping 30.0.0.1              Succeeds.
+
+==================================================
+PROBLEM 3 - R2: LOCAL USERNAME USES R2's OWN HOSTNAME INSTEAD OF SPR2's
+==================================================
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Correct encapsulation (PPP), but up/down. R2 uses
+                             CHAP, so it needs a local username matching the far
+                             router's hostname (SPR2) with a password (CCNA)
+                             matching what's configured on SPR2's side.
+show run                     Reveals the fault: the configured entry is
+                             `username R2 password CCNA` — using R2's OWN
+                             hostname instead of the required far-end hostname,
+                             SPR2.
+
+---------------- Fix (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+no username R2 password CCNA             Removes the incorrect entry.
+username SPR2 password CCNA              Adds the correct one, using SPR2's
+                                        actual hostname as the username — the
+                                        password (CCNA) was already correct.
+interface Serial0/0
+ shutdown
+ no shutdown
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief  Up/up.
+ping 20.0.0.1              Succeeds.
+
+==================================================
+PROBLEM 4 - R4: MISSING "PPP AUTHENTICATION CHAP" COMMAND
+==================================================
+
+---------------- Diagnose (R4) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Correct encapsulation (PPP), but the interface isn't
+                             up.
+show run                     Confirms R4's local `username SPR4 password CCIE`
+                             entry (correctly using the far router's hostname,
+                             matching CHAP's requirement) is present and
+                             correct. Checking the interface configuration
+                             itself, though, reveals `ppp authentication chap`
+                             is missing entirely — R4 has the right credentials
+                             configured, but never actually turned CHAP
+                             authentication on.
+
+---------------- Fix (R4) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface Serial0/0
+ shutdown
+ ppp authentication chap                 Adds the missing command, enabling CHAP
+                                        authentication on this interface.
+ no shutdown
+
+---------------- Verify (R4) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief  Up/up.
+ping 40.0.0.1              Succeeds.
+
+==================================================
+STEP 5 - VERIFY END-TO-END REACHABILITY (FROM R4)
+==================================================
+
+With pre-configured static default routes on every router pointing
+toward its own service provider, R4 can now reach every other router
+across their respective service-provider paths.
+
+---------------- R4 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.0.2         (R1) Succeeds.
+ping 30.0.0.2         (R3) Succeeds.
+ping 20.0.0.2         (R2) Succeeds.
+
+All four PPP links are confirmed fully functional, and full
+reachability across all four service-provider paths is restored.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show interfaces <interface>                       Shows encapsulation and
+                                                  Layer 1/2 up/down state.
+show ip interface brief                           Quick interface status
+                                                  summary.
+show running-config                               General-purpose command for
+                                                  spotting a missing PPP
+                                                  authentication/sent-username
+                                                  command, wrong authentication
+                                                  protocol, or a username entry
+                                                  using the wrong hostname.
+ping <ip>                                          Verify reachability across
+                                                  each link, and end-to-end
+                                                  across the whole topology.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R1 missing the `ppp pap sent-username Cisco password
+  CCNA` command — its local verification username was correctly
+  configured, but it was never sending its own credentials to SPR1.
+✓ Found and fixed R3 configured with `ppp authentication chap` instead
+  of `ppp authentication pap` — everything else (local username entry,
+  sent-username command) was already correct, only the authentication
+  protocol itself was wrong.
+✓ Found and fixed R2's local username entry using R2's own hostname
+  (`username R2`) instead of the required far-end hostname
+  (`username SPR2`) — a CHAP-specific requirement.
+✓ Found and fixed R4 missing the `ppp authentication chap` command
+  entirely — its username/password entry was already correct, but CHAP
+  itself was never actually turned on.
+✓ Verified full end-to-end reachability from R4 to R1, R2, and R3
+  across their respective service-provider paths, using pre-configured
+  static default routes.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Missing `ppp pap sent-username` vs. missing local username entry —
+  these are two independent, separately-checkable pieces of PAP
+  configuration: the local `username`/`password` entry verifies what
+  the FAR end sends, while `ppp pap sent-username` configures what THIS
+  router sends; either one can be missing/wrong independently of the
+  other, exactly as demonstrated by R1's fault here.
+• Wrong authentication protocol configured (CHAP where PAP is expected,
+  or vice versa) — everything else about the configuration can be
+  perfectly correct, but if `ppp authentication <protocol>` names the
+  wrong protocol, authentication fails outright; always confirm which
+  protocol is actually configured, not just whether authentication is
+  configured at all.
+• CHAP's username-must-equal-hostname rule as a specific, checkable
+  fault — R2's fault (using its own hostname instead of the far
+  router's) is a direct, concrete instance of the exact rule introduced
+  in Lab 061; a very natural, realistic mistake to make when typing the
+  command without double-checking which router's hostname is actually
+  required.
+• A fully-correct credential configuration with authentication itself
+  never enabled — R4's fault shows that having the right username and
+  password configured guarantees nothing if `ppp authentication chap`
+  (or `pap`) was never actually applied to the interface; the
+  credentials sitting configured but unused is a distinct, separately-
+  checkable fault from a credential mismatch.
+• Consistent "up/down" symptom across every fault in this lab —
+  despite four genuinely different underlying causes (a missing
+  sent-username command, a wrong protocol, a wrong username, and a
+  missing authentication command), every single one produced the exact
+  same visible symptom (`show interfaces` reporting "up/down"),
+  reinforcing that this status alone only narrows the problem to
+  "Layer 2/PPP," not to any specific cause — the actual configuration
+  must still be read carefully in every case.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed four separate PPP authentication
+faults across the four-pair topology extending Lab 061: R1 missing its
+`ppp pap sent-username` command, R3 configured with the wrong
+authentication protocol (CHAP instead of PAP), R2's local username
+entry using its own hostname instead of the required far-end hostname,
+and R4 missing the `ppp authentication chap` command entirely despite
+having correct credentials configured. All four links came up
+successfully, and full end-to-end reachability from R4 to R1, R2, and
+R3 across their respective service-provider paths was confirmed.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+PAP's two independent credential directions
+  "What I send" (`ppp pap sent-username`) and "what I expect to
+  receive" (the local `username`/`password` entry) are configured and
+  can fail separately.
+  Exam: expect scenario questions that test whether you understand PAP
+  requires configuration on BOTH directions of the exchange — a
+  question might show a completely correct local username entry and
+  still expect you to notice a missing or wrong `sent-username` line
+  (or vice versa), exactly as demonstrated by R1's fault here.
+  Real world: this two-sided nature is exactly why PAP misconfigurations
+  are common in practice — an engineer configuring "their side's"
+  credentials can easily forget the router also needs to know what to
+  SEND to the other side, since it feels like a separate, easy-to-skip
+  step.
+
+Correct credentials, wrong (or missing) authentication protocol/command
+  Two related but distinct fault classes: the credentials being right
+  but the declared protocol being wrong (R3), and the credentials being
+  right but authentication never being enabled at all (R4).
+  Exam: don't assume "the username and password look correct" means
+  the configuration is complete — always separately verify the
+  `ppp authentication <protocol>` line is present AND names the
+  correct protocol.
+  Real world: this is a realistic distinction in production
+  troubleshooting too — a link that "has authentication configured"
+  according to a quick glance at usernames can still be completely
+  broken if the actual `ppp authentication` command was never applied,
+  or applied with the wrong protocol keyword.
+
+Same symptom, four different root causes
+  "Up/down" alone tells you almost nothing about which of many
+  possible PPP faults is present.
+  Exam: this lab's overall structure is itself the lesson — resist the
+  urge to assume a fault "must be" whatever caused it in a previous,
+  similar-looking question; always re-derive the specific cause from
+  `show run`/`show interfaces` output each time, since PPP's "up/down"
+  symptom is shared across encapsulation mismatches, missing
+  authentication commands, wrong protocols, and wrong credentials
+  alike.
+  Real world: this is standard real-world discipline for any recurring
+  symptom with multiple possible causes — don't pattern-match to "last
+  time this was caused by X," always re-verify from the actual current
+  configuration.
+
+==================================================
+END OF LAB
+==================================================

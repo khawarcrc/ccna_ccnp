@@ -1,0 +1,402 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 059 - EIGRP Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot five separate misconfigurations — one per router — across
+the EIGRP network configured in Lab 058 (EIGRP): a wrong Autonomous
+System number on R1, a wrong network statement for R4's loopback, a
+passive interface blocking neighbor formation on R2, a wrong wildcard
+mask preventing EIGRP activation on R5's interface, and R3's manual
+summary address configured on the wrong interface.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same five-router EIGRP topology as Lab 058 — see
+[eigrp.txt](eigrp.txt) for the full diagram and addressing (R4-R1-R2-R3-R5
+in a line, EIGRP AS 100 throughout, loopback-derived router IDs). Nothing
+physically changed — one EIGRP configuration problem per router was
+introduced.
+
+==================================================
+PROBLEM 1 - R1: WRONG EIGRP AS NUMBER
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip eigrp neighbors      Shows no neighbors — but the message itself is the
+                             clue: it reports "EIGRP neighbors for process 10."
+                             This network is supposed to use AS number 100
+                             everywhere; R1 is running EIGRP under AS 10 instead.
+show run                     Confirms every other part of R1's EIGRP
+                             configuration (network statements, passive-
+                             interface, no auto-summary) is otherwise correct —
+                             the AS number itself is the only fault, but since it
+                             must match exactly across the whole domain, nothing
+                             works until it's corrected.
+
+---------------- Fix (R1) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+no router eigrp 10                      Deletes the entire (wrong-AS) EIGRP
+                                        configuration at once — removing the
+                                        `router eigrp <as>` block removes every
+                                        network statement and setting under it.
+router eigrp 100                        Recreates the configuration under the
+                                        correct AS number.
+ network 10.0.0.0
+ network 1.1.1.1 0.0.0.0
+ passive-interface Loopback0
+ no auto-summary
+
+---------------- Verify ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip eigrp neighbors  R1 now shows one neighbor, R4 — R1-R2 is still not
+                         forming (a separate fault, Problem 3).
+
+==================================================
+PROBLEM 2 - R4: WRONG NETWORK STATEMENT FOR THE LOOPBACK
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route                 R1 is receiving a number of routes from R4 (the
+                             neighbor relationship itself is fine), but R4's own
+                             loopback (4.4.4.4) is conspicuously missing from
+                             the list.
+
+---------------- Diagnose (R4) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip protocols             Shows EIGRP is configured to route for network
+                             10.0.0.0 and for a network that is NOT actually
+                             4.4.4.4/32 — a typo'd address.
+show ip interface brief       Confirms R4's actual Loopback0 address is 4.4.4.4
+                             — the `network` statement under `router eigrp` was
+                             configured with a different (incorrect) address
+                             entirely, so it never actually matched the real
+                             loopback interface.
+
+---------------- Fix (R4) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router eigrp 100
+ no network <the incorrect address> 0.0.0.0   Removes the wrong network
+                                              statement.
+ network 4.4.4.4 0.0.0.0                       Adds the correct one, exactly
+                                              matching R4's actual loopback
+                                              address.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            R4's loopback (4.4.4.4) now appears in R1's routing
+                         table.
+
+==================================================
+PROBLEM 3 - R2: F1/0 (LINK TO R1) CONFIGURED AS A PASSIVE INTERFACE
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip eigrp neighbor       R1 has formed a neighbor relationship with R4 now,
+                             but still not with R2.
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip protocols             Reveals the fault: R2's F1/0 — the physical
+                             interface connecting to R1 — is configured as a
+                             passive interface. This means R2 still advertises
+                             the 10.12.0.0/24 network on F1/0 (toward R3, since
+                             passive interfaces still advertise their own
+                             network, just via other active interfaces), but it
+                             will never form an EIGRP neighbor relationship
+                             directly over F1/0 itself.
+
+---------------- Fix (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router eigrp 100
+ no passive-interface FastEthernet1/0    Removes the passive-interface setting
+                                        from F1/0, allowing it to form a
+                                        neighbor relationship with R1.
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip eigrp neighbor   R2 is now a neighbor with both R1 and R3.
+
+==================================================
+PROBLEM 4 - R3: NO OBVIOUS FAULT — INVESTIGATE THE NEXT ROUTER (R5)
+==================================================
+
+---------------- Diagnose (R3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip protocols             Everything looks correct — the 3.3.3.3 loopback and
+                             10.x.0.0 interfaces are advertised, and the
+                             loopback is correctly passive.
+show ip eigrp neighbor        R3 is a neighbor with both R2 and R4, but not R5.
+
+R3's own configuration checks out fine, so the fault must be on R5's
+side of that specific link.
+
+---------------- Diagnose (R5) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip protocols             Shows EIGRP listed as routing for "10.0.0.0/32" —
+                             but R5 doesn't have any interface with a /32 mask
+                             at all; this is a clue that the `network` command's
+                             WILDCARD mask, not the interface's own mask, was
+                             configured incorrectly.
+show run                      Confirms the `network 10.0.0.0 0.0.0.0` statement
+                             uses a /32-equivalent wildcard (`0.0.0.0`, meaning
+                             "match this exact address only"), so EIGRP was
+                             never actually activated on R5's G0/0 (whose real
+                             address, in the 10.35.0.0/24 network, doesn't
+                             exactly equal 10.0.0.0).
+
+---------------- Fix (R5) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router eigrp 100
+ no network 10.0.0.0 0.0.0.0              Removes the incorrect, overly-narrow
+                                         network statement.
+ network 10.0.0.0                         Re-adds it using the classful shortcut
+                                         (no mask given) — matching the pattern
+                                         used on every other router in this
+                                         topology — which defaults to the
+                                         10.0.0.0/8 classful boundary and
+                                         correctly activates EIGRP on G0/0
+                                         (whose 10.35.0.0/24 address falls
+                                         within that range).
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            R5 is now receiving EIGRP routes — but individual
+                         subnet routes, not the single 10.0.0.0/8 summary it's
+                         supposed to receive from R3. That's a separate,
+                         remaining fault (Problem 5).
+
+==================================================
+PROBLEM 5 - R3: SUMMARY ADDRESS CONFIGURED ON THE WRONG INTERFACE
+==================================================
+
+---------------- Diagnose (R3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show run                      Reveals the fault: `ip summary-address eigrp 100
+                             10.0.0.0 255.0.0.0` is configured on F1/0 (the
+                             interface facing R2) instead of G0/0 (the interface
+                             facing R5). A summary address only suppresses
+                             individual routes and advertises the summary OUT of
+                             the interface it's configured on — configuring it
+                             on the wrong interface means R5 never receives the
+                             intended summarized advertisement at all.
+
+---------------- Fix (R3) ----------------
+
+Command                                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface FastEthernet1/0
+ no ip summary-address eigrp 100 10.0.0.0 255.0.0.0      Removes the summary
+                                                        command from the wrong
+                                                        interface.
+interface GigabitEthernet0/0
+ ip summary-address eigrp 100 10.0.0.0 255.0.0.0          Re-adds it on the
+                                                        correct interface — the
+                                                        one facing R5.
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            R5 now correctly shows a single summarized
+                         10.0.0.0/8 route via EIGRP.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip eigrp neighbors                          Confirms EIGRP adjacencies —
+                                                  the primary command for
+                                                  isolating which link/router
+                                                  has a problem.
+show ip protocols                                 Confirms EIGRP AS number,
+                                                  advertised networks, and
+                                                  passive-interface settings.
+show ip interface brief                           Confirms actual interface IP
+                                                  addresses, for cross-checking
+                                                  against `network` statements.
+show running-config                               General-purpose command for
+                                                  spotting a wrong AS number,
+                                                  wrong network address/mask, or
+                                                  a summary command on the wrong
+                                                  interface.
+show ip route                                     Confirms which specific
+                                                  routes (individual vs.
+                                                  summarized) a router has
+                                                  learned.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R1 running EIGRP under the wrong AS number (10
+  instead of 100) — the AS mismatch prevented ANY neighbor relationship
+  from forming until the whole `router eigrp` block was removed and
+  recreated under the correct AS.
+✓ Found and fixed R4's `network` statement for its loopback referencing
+  the wrong IP address entirely, which meant its loopback (4.4.4.4) was
+  simply never advertised.
+✓ Found and fixed R2's F1/0 (link to R1) mistakenly configured as a
+  passive interface, blocking neighbor formation with R1 specifically.
+✓ Found and fixed R5's `network` statement using an overly-narrow /32
+  wildcard mask (`0.0.0.0`) instead of the classful shortcut, which
+  meant EIGRP was never actually activated on R5's G0/0 interface.
+✓ Found and fixed R3's manual summary-address command configured on
+  the wrong interface (F1/0, facing R2, instead of G0/0, facing R5),
+  which meant R5 was receiving individual routes instead of the
+  intended 10.0.0.0/8 summary.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• EIGRP AS mismatch as a total-failure fault — unlike most other
+  single-line misconfigurations in this lab, a wrong AS number breaks
+  EVERYTHING under that `router eigrp` block at once (no neighbors, no
+  routes at all), and the `show ip eigrp neighbors` command's own output
+  ("...for process <n>") is often the fastest way to spot it.
+• Removing and recreating an entire routing process block — `no router
+  eigrp <as>` deletes an entire (wrong) EIGRP configuration in one
+  command, which is often faster and cleaner than trying to un-configure
+  individual pieces of a fundamentally wrong setup (like a wrong AS
+  number) one line at a time.
+• A `network` statement's address must EXACTLY match the real interface
+  it's meant to activate — R4's problem (a typo'd address in the
+  network statement) shows that even with the right AS and otherwise
+  correct configuration, one wrong octet in a `network` statement
+  silently excludes that specific interface from EIGRP with no error
+  message.
+• Passive interface applied to a router-facing link — same lesson as
+  the OSPF troubleshooting lab: marking a link to another router
+  (rather than a loopback or end-host segment) as passive silently
+  blocks neighbor formation on exactly that link, while its network is
+  still (uselessly) advertised via other paths.
+• Wildcard mask precision in the `network` command — `network 10.0.0.0`
+  (no mask, classful default) and `network 10.0.0.0 0.0.0.0` (an exact
+  /32 match) are very different statements; the second only matches an
+  interface whose address is EXACTLY 10.0.0.0, which almost never
+  matches anything real — a subtle, easy-to-make syntax mistake with a
+  silent (no error) failure mode.
+• EIGRP summary address is interface-directional — `ip summary-address
+  eigrp` only affects what's advertised OUT of the specific interface
+  it's configured on; configuring it on the wrong interface (as on R3
+  here) doesn't summarize anything toward the intended neighbor at all,
+  even though the command itself is otherwise entirely correct.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed five separate faults across the
+Lab 058 EIGRP topology: R1's wrong AS number (10 instead of 100), R4's
+mistyped loopback network statement, R2's F1/0 mistakenly marked
+passive, R5's overly-narrow /32 wildcard mask preventing EIGRP
+activation on G0/0, and R3's summary-address command configured on the
+wrong interface (F1/0 instead of G0/0). All EIGRP neighbor relationships
+were confirmed formed correctly, R4's loopback was confirmed reaching
+R1, and R5 was confirmed receiving the correct single 10.0.0.0/8
+summarized route instead of individual subnet routes.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+EIGRP AS mismatch — total failure, not partial
+  A wrong AS number blocks the ENTIRE EIGRP relationship, unlike most
+  single-setting faults in this lab that only affect one specific route
+  or one specific neighbor.
+  Exam: know that `show ip eigrp neighbors`' own output, showing "for
+  process <n>," is frequently the fastest diagnostic step precisely
+  because it immediately reveals the actual configured AS number
+  without needing to read the full running-config.
+  Real world: this is genuinely often the very first thing checked when
+  two EIGRP routers "just aren't talking" at all — confirm the AS
+  number before investigating anything more specific like interfaces or
+  timers.
+
+A typo'd `network` statement address, not a real network problem
+  R4's fault (a wrong address in the loopback's network statement) is
+  functionally invisible from the loopback's own perspective — the
+  interface itself is perfectly fine, only EIGRP's awareness of it is
+  broken.
+  Exam: a subtle but realistic trap — always cross-check `show ip
+  protocols`' listed networks against `show ip interface brief`'s
+  actual configured addresses, rather than assuming a `network`
+  statement's presence alone guarantees it's correct.
+  Real world: this exact typo class of error is common when manually
+  typing router configurations rather than templating/scripting them —
+  a strong argument, in real deployments, for configuration management
+  tools that generate this kind of repetitive per-router config instead
+  of hand-typing it five times.
+
+`network 10.0.0.0` (classful default) vs. `network 10.0.0.0 0.0.0.0`
+  (exact match)
+  Both look nearly identical but behave very differently — the second
+  form activates EIGRP on almost nothing in a typical topology.
+  Exam: know this exact contrast — it's a realistic and testable subnet/
+  wildcard-mask-precision trap, especially since EIGRP's classful
+  default behavior (no mask given) is itself already a slightly unusual
+  shortcut worth remembering on its own.
+  Real world: this kind of "looks almost right but isn't" wildcard
+  mistake is exactly why experienced engineers double-check `show ip
+  protocols`' actual matched networks after any `network` statement
+  change, rather than trusting the command was accepted correctly just
+  because it didn't error.
+
+==================================================
+END OF LAB
+==================================================

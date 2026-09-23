@@ -1,0 +1,379 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 071 - IPv4 and IPv6 ACLs
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+A review/combination lab (largely ICND1 material revisited) configuring
+four different ACLs, deliberately mixing every major type covered in
+this series: a standard numbered IPv4 ACL, a named IPv6 ACL, an
+extended named IPv4 ACL, and a second named IPv6 ACL applied to vty
+lines instead of a regular interface. Each ACL enforces a specific,
+narrow access-control requirement rather than broadly blocking traffic.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  10.1.1.0/24                                              10.4.4.0/24
+  +------+                                                  +----------+
+  | PC1  |  10.1.1.11                                       | Server1  |
+  +--+---+                                                  |10.4.4.100|
+     |  G0/1                                                +-----+----+
+     |                                                             | G0/0
+  +--+----+                                                   +----+----+
+  |  R1   |======= 2001:DB8:12:12::/64 (R1<->R2 link) =======|   R2    |
+  +--+----+  R1: ::1                            R2 (S0/0/0): ::2 +----+
+     | G0/2                                                        | G0/1 (to PC3/PC4)
+  +--+-------------------+                                    +----+-------------------+
+  |  2001:DB8:33::/64     |                                    |  10.2.2.0/24            |
+  +------+  +------+     |                                    +------+  +------+        |
+  | PC5  |  | PC6  |     |                                    | PC3  |  | PC4  |        |
+  +------+  +------+     |                                    +------+  +------+        |
+  ::11       ::12         |                                    10.2.2.11  10.2.2.12      |
+                          |                                                              |
+                    2001:DB8:2222::/64 (Server2's network — reachable from R1's
+                    side of the topology via a path beyond G0/2; not detailed
+                    in the source, since this lab's focus is ACL behavior, not
+                    that specific path's addressing)
+
+PC1 sits behind R1's G0/1 (10.1.1.0/24). PC5 and PC6 sit behind R1's
+G0/2 (an IPv6-only segment, 2001:DB8:33::/64). PC3 and PC4 sit behind
+R2 (10.2.2.0/24). Server1 sits behind R2's G0/0 (10.4.4.0/24). R1 and
+R2 are connected via an IPv6-addressed link (2001:DB8:12:12::/64) —
+R2's vty lines (Telnet) are reachable at that link's R2-side address.
+Server2's network (2001:DB8:2222::/64) is reachable from R1's side of
+the network by a path not detailed in the source transcript.
+
+==================================================
+ACL 1 - STANDARD NUMBERED IPv4: BLOCK PC4 FROM 10.4.4.0/24
+==================================================
+
+Requirement: prevent PC4 specifically from accessing the 10.4.4.0/24
+network (Server1's subnet), while everyone else can still reach it.
+Standard ACLs can only match on SOURCE address, so — per the general
+best-practice rule of applying standard ACLs as close to the
+DESTINATION as possible (since they can't be more specific about what
+they're protecting) — this one is applied on R2's G0/0 interface,
+outbound toward Server1's subnet.
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+access-list 1 deny host 10.2.2.12            Denies PC4 specifically (`host`
+                                            keyword matches exactly one address).
+access-list 1 permit any                     Permits everyone else — needed
+                                            explicitly since ACL 1 will otherwise
+                                            end with an implicit deny-all.
+interface GigabitEthernet0/0
+ ip access-group 1 out                       Applies the ACL outbound on G0/0 —
+                                            filtering traffic as it LEAVES R1
+                                            toward the 10.4.4.0/24 network,
+                                            which is exactly the direction that
+                                            blocks PC4 specifically from
+                                            reaching that subnet.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 10.4.4.100 (from PC4)   Fails — "Destination host unreachable" reported
+                             from 10.2.2.2 (R2's own address on that segment),
+                             confirming the ACL is actively blocking PC4.
+ping 10.4.4.100 (from PC3)   Succeeds — confirming the ACL only affects PC4,
+                             not other hosts on the same subnet.
+
+==================================================
+ACL 2 - NAMED IPv6: BLOCK PC5 FROM 2001:DB8:2222::/64
+==================================================
+
+Requirement: prevent PC5 from reaching the 2001:DB8:2222::/64 network.
+IPv6 ACLs only support the named format — there is no numbered IPv6 ACL
+option at all. Applied on R1's G0/2 interface, inbound (filtering PC5's
+traffic as it enters R1 from that segment).
+
+---------------- R1 ----------------
+
+Command                                                Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ipv6 access-list G0_2_in                                Creates a named IPv6 ACL
+                                                        — the name (chosen here
+                                                        to reflect where it's
+                                                        applied) is required, as
+                                                        IPv6 ACLs have no
+                                                        numbered equivalent.
+ deny ipv6 host 2001:DB8:33::11 2001:DB8:2222::/64        Denies PC5 specifically,
+                                                        destined for the
+                                                        2001:DB8:2222::/64
+                                                        network only — PC5 can
+                                                        still reach everything
+                                                        else.
+ permit ipv6 any any                                     Permits all other IPv6
+                                                        traffic.
+interface GigabitEthernet0/2
+ ipv6 traffic-filter G0_2_in in                           Applies the ACL —
+                                                        IPv6 uses `ipv6
+                                                        traffic-filter` here,
+                                                        NOT `ipv6 access-group`
+                                                        (that command doesn't
+                                                        exist for interfaces;
+                                                        `access-group` is
+                                                        IPv4-specific
+                                                        terminology).
+
+---------------- Verify ----------------
+
+Command                                Result
+-----------------------------------------------------------------------------------------
+ping 2001:DB8:2222::101 (from PC5)       Fails — unreachable message from R1.
+ping 2001:DB8:2222::100 (from PC6)       Succeeds — confirming the ACL only
+                                        affects PC5.
+
+==================================================
+ACL 3 - EXTENDED NAMED IPv4: BLOCK PC3 FROM REACHING PC1 SPECIFICALLY
+==================================================
+
+Requirement: prevent PC3 from reaching PC1 specifically (not the whole
+subnet PC1 is on — just that one host talking to that one other host),
+which requires an EXTENDED ACL, since only extended ACLs can match on
+both source AND destination address. Applied on R1's G0/1 interface,
+inbound (filtering as traffic from PC3 — arriving from across the
+network — enters R1 on its way to PC1).
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+ip access-list extended G0_1_in             Creates a named, extended IPv4 ACL.
+ deny ip host 10.2.2.11 host 10.1.1.11        Denies traffic specifically FROM
+                                            PC3 (10.2.2.11) TO PC1 (10.1.1.11) —
+                                            both source and destination
+                                            precisely matched, which only an
+                                            extended ACL can express.
+ permit ip any any                           Permits everything else — no other
+                                            restriction was requested.
+interface GigabitEthernet0/1
+ ip access-group G0_1_in in                   Applies the named ACL inbound on
+                                            G0/1.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 10.1.1.11 (from PC3)    Fails — "Destination host unreachable."
+ping 10.1.1.11 (from PC4)    Succeeds — confirming the block is specific to the
+                             PC3-to-PC1 pair, not PC3's whole subnet or PC1's
+                             whole subnet.
+
+==================================================
+ACL 4 - NAMED IPv6, APPLIED TO VTY LINES: ONLY PC6 MAY TELNET TO R2
+==================================================
+
+Requirement: allow ONLY PC6 to Telnet into R2; no other host should be
+able to. Rather than applying this to a regular interface, it's applied
+directly to R2's vty lines — controlling management access to the
+router itself, regardless of which physical interface the Telnet
+traffic happens to arrive on.
+
+---------------- R2 ----------------
+
+Command                                                        Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ipv6 access-list telnet                                          Creates a named IPv6
+                                                                ACL for this purpose.
+ permit tcp host 2001:DB8:33::12 any eq telnet                    Permits PC6
+                                                                specifically, over
+                                                                TCP (since Telnet
+                                                                runs over TCP), to
+                                                                ANY destination
+                                                                (since PC6 could
+                                                                Telnet to whichever
+                                                                of R2's interfaces
+                                                                it chooses),
+                                                                specifically on port
+                                                                23 (`eq telnet`). No
+                                                                further statement is
+                                                                needed — every ACL
+                                                                ends with an implicit
+                                                                deny-all, so anyone
+                                                                other than PC6 is
+                                                                automatically blocked.
+line vty 0 15
+ ipv6 access-class telnet in                                      Applies the ACL to
+                                                                the vty lines — for
+                                                                interfaces, IPv4 uses
+                                                                `access-group` and
+                                                                IPv6 uses `traffic-
+                                                                filter`; for VTY
+                                                                lines specifically,
+                                                                BOTH address
+                                                                families instead use
+                                                                `access-class` (with
+                                                                `ipv6` prefixed for
+                                                                the IPv6 version).
+
+---------------- Verify ----------------
+
+---------------- PC6 ----------------
+
+Command                                    Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                     Succeeds — prompted for the vty
+                                            password (CCNA, lowercase), then
+                                            logged in. (R2's S0/0/0 interface
+                                            address, on the R1-R2 link, was used
+                                            as the Telnet target.)
+
+---------------- PC5 ----------------
+
+Command                                    Result
+-----------------------------------------------------------------------------------------
+telnet 2001:DB8:12:12::2                     Fails — blocked by the implicit
+                                            deny-all at the end of the ACL,
+                                            confirming only PC6 is permitted.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show access-lists                                Lists all configured ACLs
+                                                  (numbered and named, IPv4 and
+                                                  IPv6) and their statements.
+show ip interface <interface>                     Shows which numbered/named
+                                                  IPv4 ACL is applied, and in
+                                                  which direction.
+show ipv6 interface <interface>                    Shows which named IPv6 ACL
+                                                  (traffic-filter) is applied.
+show running-config                               Verify every ACL definition
+                                                  and its application point
+                                                  (interface or vty line).
+ping / telnet                                      Verify the intended host is
+                                                  blocked and all others are
+                                                  unaffected.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured a standard numbered IPv4 ACL (ACL 1) blocking only PC4
+  from reaching 10.4.4.0/24, applied outbound on R2's G0/0 — following
+  the standard-ACL-near-the-destination best practice, since standard
+  ACLs can only match source address.
+✓ Configured a named IPv6 ACL (G0_2_in) blocking only PC5 from reaching
+  2001:DB8:2222::/64, applied inbound on R1's G0/2 using `ipv6
+  traffic-filter` (not `ipv6 access-group`, which doesn't exist).
+✓ Configured an extended named IPv4 ACL (G0_1_in) blocking traffic
+  specifically from PC3 to PC1 (not PC3's whole subnet, nor PC1's whole
+  subnet), applied inbound on R1's G0/1 — requiring an extended ACL
+  since both source AND destination needed to be matched.
+✓ Configured a named IPv6 ACL (telnet) permitting only PC6 to Telnet to
+  R2, applied to R2's vty lines with `ipv6 access-class` (the VTY-line-
+  specific command for both address families, distinct from
+  `access-group`/`traffic-filter` used on regular interfaces) — relying
+  on the implicit deny-all to block everyone else without an explicit
+  deny statement.
+✓ Verified all four ACLs with targeted ping/Telnet tests, confirming
+  each restriction affected only its intended host and nothing else.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Standard vs. extended ACLs — standard ACLs can only match on source
+  address (best practice: apply close to the destination); extended
+  ACLs can match on source AND destination address (plus protocol/port
+  for TCP/UDP), allowing much more specific rules like "block this one
+  host from reaching that one other host" as demonstrated in ACL 3.
+• Numbered vs. named ACLs — IPv4 supports both; IPv6 supports ONLY
+  named ACLs — there is no numbered IPv6 ACL syntax at all.
+• `ip access-group` vs. `ipv6 traffic-filter` — the commands used to
+  apply an ACL to a regular interface differ by address family: IPv4
+  uses `ip access-group <name/number> <in|out>`, IPv6 uses `ipv6
+  traffic-filter <name> <in|out>` — there is no `ipv6 access-group`
+  command for interfaces.
+• `access-class` for VTY lines, both address families — when applying
+  an ACL to VTY lines (rather than a regular interface) to control
+  remote-access permissions, BOTH IPv4 and IPv6 use `access-class`
+  (`ipv6 access-class` for the IPv6 version) — a different command
+  family from the interface-level `access-group`/`traffic-filter`
+  commands.
+• Implicit deny-all — every ACL (IPv4 or IPv6, standard or extended,
+  numbered or named) ends with an implicit "deny everything" rule; when
+  the goal is "permit only X," a single permit statement for X is
+  sufficient — no explicit deny statement is needed for everyone else.
+• `eq telnet` — matches TCP port 23 by its well-known protocol name
+  rather than the raw port number, in an extended ACL statement.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured and applied four distinct ACLs covering every
+major type in this series: a standard numbered IPv4 ACL blocking one
+host from one subnet, a named IPv6 ACL blocking one host from another
+subnet, an extended named IPv4 ACL blocking one specific host-to-host
+pair, and a named IPv6 ACL restricting Telnet access to R2's vty lines
+to a single permitted host. All four were verified with targeted ping/
+Telnet tests, confirming each restriction was correctly scoped to only
+its intended host.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Standard ACL placement: near the destination
+  Since a standard ACL can only see the source address, placing it near
+  the source risks accidentally blocking that source's access to
+  MANY destinations, not just the one intended.
+  Exam: know this placement rule cold — "apply standard ACLs as close
+  to the destination as possible, extended ACLs as close to the source
+  as possible" is a frequently and directly tested rule of thumb.
+  Real world: this rule genuinely reflects real deployment practice —
+  minimizing an ACL's blast radius to exactly the traffic flow it's
+  meant to control, rather than broadly affecting a source host's other
+  traffic incidentally.
+
+IPv6 ACLs: named only, different apply-commands
+  Two IPv6-specific quirks bundled together: no numbered format, and
+  distinct application commands (`traffic-filter`, `access-class`)
+  from IPv4's `access-group`.
+  Exam: expect direct questions testing whether you know IPv6 has no
+  numbered ACL option, and whether you can correctly pick
+  `ipv6 traffic-filter` (interfaces) vs. `ipv6 access-class` (VTY
+  lines) instead of incorrectly reaching for `ipv6 access-group`
+  (which isn't a real command).
+  Real world: as IPv6 deployment grows, getting comfortable with these
+  IPv6-specific ACL commands (rather than assuming IPv4 syntax
+  translates directly) is increasingly a genuine, practical skill gap
+  worth closing early.
+
+Extended ACL for a specific host-to-host restriction
+  Blocking "PC3 to PC1" (not PC3's whole subnet, not PC1's whole
+  subnet) is only expressible with an extended ACL.
+  Exam: recognize when a requirement's WORDING (a specific pair of
+  hosts, or a specific protocol/port) demands an extended ACL rather
+  than a standard one — a common exam scenario tests whether you
+  correctly identify which ACL type a stated requirement actually
+  needs.
+  Real world: this kind of narrow, specific access restriction (one
+  host talking to one other host, or one host restricted from one
+  particular service) is exactly the level of granularity real
+  security policies often require — broad subnet-level blocking is
+  the exception, not the rule, in a well-designed ACL policy.
+
+==================================================
+END OF LAB
+==================================================

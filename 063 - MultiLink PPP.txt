@@ -1,0 +1,346 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 063 - MultiLink PPP
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure Multilink PPP (MLPPP) — conceptually similar to EtherChannel,
+but for PPP serial links — bundling two physical serial interfaces into
+one logical Multilink interface between R1 and SPR1 (using PAP
+authentication) and between R2 and SPR2 (using CHAP authentication).
+MLPPP provides both redundancy (if one physical link fails, the other
+keeps forwarding) and increased aggregate bandwidth (multiple links
+forwarding simultaneously), the same dual benefit EtherChannel provides
+for Ethernet links.
+
+Note: this lab (and the following PPPoE lab) uses **GNS3, not Packet
+Tracer** — the presenter notes Packet Tracer doesn't support every
+CCNA exam topic, and MLPPP/PPPoE specifically required switching tools
+for this one lab. The routers are Cisco 7200 series (IOS image not
+included/distributable — sourced separately by the user). This is a
+one-off tooling change; the rest of the series returns to Packet
+Tracer.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+   S1/0 <-> S1/0   +---------+
+  |   R1   |===================|  SPR1   |   Multilink1 (PAP)
+  +--------+   S1/1 <-> S1/1   +---------+
+  Multilink1: 10.0.0.2/24                Multilink1: 10.0.0.1/24
+  (bundles S1/0 + S1/1)
+
+  +--------+   S1/0 <-> S1/0   +---------+
+  |   R2   |===================|  SPR2   |   Multilink1 (CHAP)
+  +--------+   S1/1 <-> S1/1   +---------+
+  Multilink1: 20.0.0.2/24                Multilink1: 20.0.0.1/24
+  (bundles S1/0 + S1/1)
+
+R1 and R2 are two independent routers, each connected to its own
+service provider router (SPR1, SPR2) via TWO parallel serial links
+(S1/0 and S1/1), bundled together into a single logical `Multilink1`
+interface on each side — this is where the IP address actually lives,
+not on the physical interfaces. R1-SPR1 uses PAP authentication;
+R2-SPR2 uses CHAP — directly paralleling the two authentication methods
+from Lab 061, just now applied to a bundled multilink interface instead
+of a single physical one. SPR1 and SPR2 are pre-configured before this
+lab begins.
+
+==================================================
+STEP 1 - CONFIGURE MULTILINK PPP WITH PAP (R1 <-> SPR1)
+==================================================
+
+SPR1 is pre-configured for MLPPP with PAP, expecting R1 to authenticate
+using username "packet" / password "tracer".
+
+---------------- R1 ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username packet password tracer                      Local username/password entry
+                                                    matching what SPR1 will send —
+                                                    same PAP verification concept
+                                                    as Lab 061.
+interface Multilink1                                  Creates the logical multilink
+                                                    interface. Multilink INTERFACE
+                                                    numbers must match on both
+                                                    ends of the bundle (R1's
+                                                    Multilink1 must correspond to
+                                                    SPR1's Multilink1).
+ ppp multilink                                        Enables PPP multilink on this
+                                                    logical interface.
+ ppp multilink group 1                                 Sets this interface's
+                                                    multilink GROUP number — the
+                                                    physical interfaces will be
+                                                    told to join group 1 later.
+                                                    This group number must also
+                                                    match on the neighboring
+                                                    router.
+ ppp authentication pap                               Enables PAP authentication on
+                                                    the multilink interface —
+                                                    authentication is configured
+                                                    here, at the logical interface
+                                                    level, not per physical link.
+ ppp pap sent-username Cisco password CCNA             Configures what R1 sends to
+                                                    SPR1 — per the network
+                                                    diagram's instructions,
+                                                    username "Cisco" / password
+                                                    "CCNA".
+ ip address 10.0.0.2 255.255.255.0                     The IP address is configured
+                                                    HERE, on the logical Multilink
+                                                    interface — never on the
+                                                    individual physical
+                                                    interfaces that join it.
+
+---------------- R1 — join the physical interfaces to the multilink group ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface Serial1/0
+ encapsulation ppp                   Sets PPP encapsulation on the physical
+                                    interface.
+ ppp multilink group 1               Joins this physical interface to multilink
+                                    group 1 (matching the group number set on
+                                    the logical Multilink1 interface).
+ no shutdown
+interface Serial1/1
+ encapsulation ppp
+ ppp multilink group 1
+ no shutdown
+
+Only three commands are needed per physical interface: encapsulation,
+group membership, and enabling the interface — no IP address, and no
+authentication configuration at the physical-interface level at all.
+
+---------------- Verify (R1) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ppp all             Shows both physical interfaces (S1/0, S1/1) AND the
+                         logical Multilink1 interface all sharing the same peer
+                         address (10.0.0.1, SPR1) and the same peer name
+                         ("packet") that SPR1 authenticates with.
+show ppp multilink        Shows the remote username ("packet") and local
+                         username ("Cisco") again, and confirms both member
+                         links (Serial1/0 and Serial1/1) are part of the bundle.
+ping 10.0.0.1             Succeeds.
+
+==================================================
+STEP 2 - CONFIGURE MULTILINK PPP WITH CHAP (R2 <-> SPR2)
+==================================================
+
+Same overall structure as R1, but using CHAP instead of PAP — the
+username must match the far router's hostname (SPR2), with a password
+matching on both ends (CCNA).
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username SPR2 password CCNA                 Local username/password entry, using
+                                            SPR2's actual hostname as the
+                                            username — same CHAP requirement as
+                                            Lab 061.
+interface Multilink1
+ ppp multilink
+ ppp multilink group 1
+ ppp authentication chap                     CHAP instead of PAP — no separate
+                                            "sent-username" command is needed
+                                            for CHAP, same as in Lab 061.
+ ip address 20.0.0.2 255.255.255.0
+
+interface Serial1/0
+ encapsulation ppp
+ ppp multilink group 1
+ no shutdown
+interface Serial1/1
+ encapsulation ppp
+ ppp multilink group 1
+ no shutdown
+
+---------------- Verify (R2) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ppp all             Both physical interfaces and Multilink1 share the same
+                         peer address (20.0.0.1, SPR2) and peer name ("SPR2").
+show ppp multilink        Shows remote username "SPR2," local username "R2,"
+                         and confirms both member links (S1/0, S1/1) are
+                         bundled.
+ping 20.0.0.1             Succeeds.
+
+==================================================
+STEP 3 - CONFIGURE STATIC DEFAULT ROUTES AND VERIFY END-TO-END REACHABILITY
+==================================================
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 20.0.0.1            Static default route pointing to
+                                            SPR2, allowing R2 to reach networks
+                                            beyond its own service provider link
+                                            (including R1's side).
+show ip route                                Confirms the default route,
+                                            outgoing via the Multilink1
+                                            interface.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 10.0.0.1            Static default route pointing to
+                                            SPR1.
+show ip route                                Confirms the default route.
+ping 20.0.0.2 (R2's Multilink1 address)       Succeeds — full end-to-end
+                                            reachability from R1, across its
+                                            multilink bundle to SPR1, through
+                                            the service provider network, and
+                                            across R2's own multilink bundle to
+                                            R2 itself.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ppp all                                     Shows every PPP-related
+                                                  interface (physical members
+                                                  and the logical Multilink
+                                                  interface) and their peer
+                                                  address/name.
+show ppp multilink                                Shows the multilink bundle's
+                                                  remote/local usernames and its
+                                                  member physical links.
+show ip route                                    Confirms static default
+                                                  routes and next-hop
+                                                  interfaces.
+ping <ip>                                          Verify reachability across
+                                                  the bundle and end-to-end.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured a Multilink1 logical interface on R1, bundling two
+  physical serial interfaces (S1/0, S1/1) with `ppp multilink group 1`,
+  and configured PAP authentication plus the IP address entirely on the
+  logical Multilink interface (never on the physical members).
+✓ Joined R1's two physical serial interfaces to multilink group 1
+  with `encapsulation ppp` + `ppp multilink group 1` + `no shutdown`,
+  and verified both members appear correctly bundled via `show ppp
+  multilink`, with a successful ping to SPR1.
+✓ Repeated the same structure on R2, using CHAP authentication instead
+  of PAP (local username matching SPR2's hostname), and verified
+  successfully.
+✓ Configured static default routes on both R1 and R2 pointing toward
+  their respective service providers, and confirmed full end-to-end
+  reachability from R1 to R2 across both multilink bundles and the
+  service provider network in between.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• MLPPP (Multilink PPP) — bundles multiple physical PPP (typically
+  serial) links into one logical interface, providing both redundancy
+  (surviving a single member link failure) and increased aggregate
+  bandwidth (traffic spread across all active member links) — the PPP/
+  serial-link equivalent of EtherChannel for Ethernet.
+• Configuration lives on the logical Multilink interface, not the
+  physical members — the IP address, PPP authentication protocol
+  (`ppp authentication pap`/`chap`), and any sent-username/local-
+  username configuration all belong on `interface Multilink<n>`; the
+  physical member interfaces only need `encapsulation ppp`, `ppp
+  multilink group <n>`, and `no shutdown`.
+• Multilink interface number vs. multilink group number — the logical
+  `interface Multilink<n>` number must match between the two routers
+  forming the bundle, and the `ppp multilink group <n>` number
+  (referenced both on the logical interface and on each physical
+  member) must also match between the two ends — both are simply
+  locally-consistent identifiers that happen to need agreement across
+  the link, similar in spirit to EtherChannel's channel-group numbering.
+• `show ppp all` and `show ppp multilink` — the two primary
+  verification commands for MLPPP: `show ppp all` gives an overview of
+  every PPP interface (physical and logical) and their peer identity;
+  `show ppp multilink` specifically confirms which physical interfaces
+  are bundled into which multilink group, along with local/remote
+  username information.
+• PAP and CHAP configuration on a multilink bundle is otherwise
+  identical to a single physical PPP link (Lab 061) — the only
+  structural change is WHERE the commands are applied (the logical
+  Multilink interface instead of a single physical interface).
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured Multilink PPP between R1 and SPR1 (PAP
+authentication, bundling S1/0 and S1/1 into Multilink1 at 10.0.0.2/24)
+and between R2 and SPR2 (CHAP authentication, bundling S1/0 and S1/1
+into Multilink1 at 20.0.0.2/24), verifying both bundles via `show ppp
+all`/`show ppp multilink` and a successful ping to each service
+provider. Configured static default routes on both R1 and R2 and
+confirmed full end-to-end reachability between R1 and R2 across their
+respective service-provider paths.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Configuration location: logical interface vs. physical members
+  A very specific, testable structural rule — IP address and PPP
+  authentication belong on the Multilink interface; encapsulation and
+  group membership belong on the physical members.
+  Exam: expect a question testing exactly this split — e.g. "where do
+  you configure the IP address for an MLPPP bundle" (answer: the
+  logical Multilink interface, never a physical member) — a natural
+  point of confusion for anyone coming from single-link PPP
+  configuration.
+  Real world: this same logical-vs-physical split appears in
+  EtherChannel too (Port-channel interface vs. physical members) —
+  recognizing the pattern once makes both technologies' configuration
+  model intuitive.
+
+MLPPP as PPP's answer to EtherChannel
+  Same underlying motivation (redundancy + aggregate bandwidth) as
+  EtherChannel, just for a different link type.
+  Exam: know MLPPP by name and purpose specifically because it's easy
+  to only think of "link bundling" in terms of EtherChannel/Ethernet —
+  the exam explicitly separates these as distinct topics even though
+  the concept is nearly identical.
+  Real world: MLPPP is genuinely still used for bonding multiple slower
+  WAN links (e.g. multiple T1/E1 or DSL circuits) into a single
+  higher-bandwidth, more resilient logical connection where a single
+  faster physical circuit isn't available or affordable.
+
+Matching identifiers across the link (multilink interface number,
+group number)
+  Both numbers are LOCAL identifiers, but must be consistent between
+  the two routers forming the bundle for it to work correctly — subtly
+  different from, but easy to conflate with, OSPF's genuinely
+  locally-significant process ID.
+  Exam: don't assume every "number configured on both routers" concept
+  works like OSPF's process ID (free to differ) — MLPPP's multilink
+  interface/group numbers are a case where matching values across the
+  link is expected/required for clean correlation, even if not
+  strictly failure-causing if mismatched in every possible IOS
+  implementation — treat them as required-to-match for exam purposes.
+  Real world: consistent numbering across devices (even where not
+  strictly required) is simply good documentation/operational
+  practice — it makes `show` output and troubleshooting dramatically
+  easier to correlate across both ends of a link.
+
+==================================================
+END OF LAB
+==================================================

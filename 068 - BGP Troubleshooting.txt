@@ -1,0 +1,293 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 068 - BGP Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot three separate misconfigurations — all located on R1 —
+across the BGP/OSPF network from Lab 067 (BGP): a BGP neighbor
+configured with the wrong remote AS number, an OSPF network statement
+placed in the wrong area (which indirectly broke BGP by starving it of
+routes to advertise), and a BGP `network` statement using the wrong
+mask for the internal summary route.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 067 — see [bgp.txt](bgp.txt) for the full diagram
+and addressing: R1 (AS 65000) peering via eBGP with SPR1 (AS 65001),
+R1/R2/R3 running internal OSPF in a triangle, and a Null0 discard route
+on R1 summarizing the internal transit networks as 10.0.0.0/16. Nothing
+physically changed — all three faults are configuration problems on R1
+alone.
+
+==================================================
+PROBLEM 1 - R1: BGP NEIGHBOR CONFIGURED WITH THE WRONG REMOTE AS
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable                       R1 is logging both OSPF- and BGP-related messages —
+                             the BGP one is investigated first: "peer in wrong
+                             AS."
+show ip bgp summary           Confirms the BGP router ID (1.1.1.1, taken from the
+                             loopback — same principle as OSPF/EIGRP router IDs)
+                             and shows the neighbor 10.0.0.1 (SPR1) associated
+                             with AS 65000 — but SPR1 is actually in AS 65001.
+                             This mismatch is exactly why the "peer in wrong AS"
+                             message appears.
+show ip bgp neighbors          Confirms the BGP session state is "Idle" — the
+                             very first BGP state, and a wrong remote-AS
+                             configuration prevents the session from ever
+                             progressing past it.
+
+---------------- Fix (R1) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router bgp 65000
+ neighbor 10.0.0.1 remote-as 65001            Corrects the neighbor's remote AS
+                                            number to 65001 — re-entering the
+                                            `neighbor` command with the
+                                            corrected AS number immediately
+                                            triggers a "neighbor is up" message.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip bgp neighbors    BGP state now shows "Established" — the desired,
+                         fully-formed peering state.
+
+==================================================
+PROBLEM 2 - R1: OSPF NETWORK STATEMENT IN THE WRONG AREA
+==================================================
+
+Despite fixing the BGP peering, R1 keeps logging OSPF-related messages.
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+                              The logged OSPF message explicitly states the
+                             problem: an area ID mismatch.
+show ip route                 Confirms R1 isn't receiving any OSPF routes at
+                             all — a direct consequence of the area mismatch.
+show ip protocols              Reveals the fault: OSPF is activated on all of
+                             R1's interfaces in Area 1 — it should be Area 0,
+                             matching R2 and R3's configuration.
+
+---------------- Fix (R1) ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1
+ no network 0.0.0.0 255.255.255.255 area 1            Removes the incorrect
+                                                    area assignment.
+ network 0.0.0.0 255.255.255.255 area 0               Re-adds it with the
+                                                    correct area (0), matching
+                                                    R2 and R3.
+
+Although this was purely an OSPF fault, it directly affected BGP too:
+with no OSPF routes in R1's routing table, R1 had nothing (from the
+internal network) to actually advertise into BGP in the first place —
+a clear example of how a problem in one routing protocol can silently
+starve a completely different one of the information it depends on.
+
+==================================================
+PROBLEM 3 - R1: BGP SUMMARY NETWORK STATEMENT USES THE WRONG MASK
+==================================================
+
+---------------- Diagnose (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+enable
+ping 15.0.0.1             Still fails, even after fixing Problems 1 and 2 —
+                         indicating one more fault remains, related to R1's
+                         advertisement of the internal summary route toward
+                         the ISP.
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route                 Confirms the 10.0.0.0/16 discard route IS present
+                             in the routing table (this part is fine).
+show ip bgp                   However, that summary route is NOT showing up in
+                             the BGP table at all — it isn't actually being
+                             advertised.
+show run                      Reveals the fault: the BGP `network` statement is
+                             configured as `network 10.0.0.0 mask 255.0.0.0` —
+                             an /8 mask — rather than the intended /16
+                             (255.255.0.0). Because BGP requires an EXACT
+                             match against the routing table, and the routing
+                             table's actual entry is 10.0.0.0/16 (not /8),
+                             this statement matches nothing and silently fails
+                             to advertise anything — with no error given.
+
+---------------- Fix (R1) ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+router bgp 65000
+ no network 10.0.0.0 mask 255.0.0.0                   Removes the incorrect
+                                                    (wrong-mask) statement.
+ network 10.0.0.0 mask 255.255.0.0                    Re-adds it with the
+                                                    correct /16 mask, exactly
+                                                    matching the Null0 discard
+                                                    route already present in
+                                                    the routing table.
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 15.0.0.1             Succeeds now — the summary route is correctly
+                         advertised, restoring the return path for external
+                         traffic.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip bgp summary                              Shows BGP neighbor AS number
+                                                  and session status —
+                                                  immediately reveals an AS
+                                                  mismatch.
+show ip bgp neighbors                             Shows detailed BGP session
+                                                  state (Idle, Established,
+                                                  etc.) — the fastest way to
+                                                  confirm whether a peering has
+                                                  actually formed.
+show ip protocols                                 Confirms OSPF area
+                                                  assignments per interface.
+show ip route                                    Confirms which routes (OSPF
+                                                  and static/discard) actually
+                                                  exist in the table.
+show ip bgp                                       Shows what BGP has actually
+                                                  learned/is advertising —
+                                                  distinct from what merely
+                                                  exists in the general routing
+                                                  table.
+show running-config                              General-purpose command for
+                                                  spotting a wrong AS number,
+                                                  wrong OSPF area, or wrong BGP
+                                                  network mask.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R1's BGP neighbor statement configured with the
+  wrong remote AS (65000 instead of SPR1's actual 65001), which had
+  been keeping the BGP session stuck in the "Idle" state.
+✓ Found and fixed R1's OSPF network statement placed in Area 1 instead
+  of the correct Area 0, which had been preventing R1 from receiving
+  any internal OSPF routes at all — indirectly starving BGP of routes
+  to advertise, even after the BGP peering itself was fixed.
+✓ Found and fixed R1's BGP summary network statement using an
+  incorrect /8 mask instead of the intended /16, which silently failed
+  to match the actual 10.0.0.0/16 discard route present in the routing
+  table.
+✓ Verified full restoration by successfully pinging the external
+  server from R2, confirming all three faults were resolved.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• "Peer in wrong AS" and the BGP "Idle" state — a mismatched
+  `remote-as` value produces this specific, named error message and
+  keeps the session stuck at BGP's very first state (Idle), never
+  progressing toward Established — a direct, recognizable symptom
+  distinct from other BGP session problems.
+• A fault in one routing protocol silently starving another — this
+  lab's OSPF area mismatch had nothing to do with BGP configuration
+  itself, yet directly prevented BGP from having anything meaningful to
+  advertise, since BGP was correctly configured to advertise routes
+  that simply didn't exist in R1's routing table due to the separate
+  OSPF problem.
+• `show ip route` vs. `show ip bgp` — these two commands can disagree,
+  and the difference is diagnostic: a route existing in the general
+  routing table (`show ip route`) doesn't guarantee it's actually being
+  advertised via BGP (`show ip bgp`) — exactly the situation with R1's
+  wrong-mask summary statement, where the underlying route was fine but
+  BGP simply wasn't matching/advertising it.
+• A BGP `network` mask that's syntactically valid but doesn't match the
+  routing table — R1's /8-instead-of-/16 mask is accepted without error
+  by IOS, but produces zero actual advertisement, since it doesn't
+  match any real routing-table entry — reinforcing BGP's exact-match
+  requirement introduced in Lab 067 as a genuinely easy, silent-failure
+  mistake to make.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed three separate faults, all located on
+R1, across the Lab 067 BGP/OSPF network: a BGP neighbor statement with
+the wrong remote AS number (fixed to 65001), an OSPF network statement
+in the wrong area (fixed to Area 0), and a BGP summary network
+statement using the wrong mask (fixed to the correct /16, matching the
+Null0 discard route). Restored full BGP session establishment, OSPF
+route learning, and the correct advertisement of the internal summary
+route — confirmed by a successful ping from R2 to the external server.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+BGP "peer in wrong AS" / Idle state
+  A specific, named diagnostic message paired with a specific,
+  recognizable session state.
+  Exam: memorize both the exact message wording concept ("peer in wrong
+  AS") and that a BGP session stuck at "Idle" (rather than a later
+  state like "Active" or "Established") is a strong signal of a basic
+  configuration mismatch (wrong AS number, or the peering not even
+  being attempted) rather than a deeper protocol-level problem.
+  Real world: this exact message and symptom pairing is genuinely what
+  engineers see and search for when troubleshooting a real BGP session
+  that won't establish — recognizing it immediately narrows
+  troubleshooting straight to the `remote-as` value on both sides.
+
+Cross-protocol fault dependency (OSPF breaking BGP indirectly)
+  A routing protocol can only advertise routes it actually has — a
+  fault anywhere upstream in how those routes are learned affects
+  everything downstream that depends on them.
+  Exam: expect scenario questions that require recognizing a
+  root cause in a DIFFERENT protocol than the one whose symptom you're
+  actually investigating — don't assume a BGP symptom must have a BGP
+  root cause.
+  Real world: this kind of cross-protocol dependency is extremely
+  common in real multi-protocol networks (redistribution points, border
+  routers running both an IGP and BGP) — a solid mental model of which
+  protocol feeds routes into which other one is essential for efficient
+  real-world troubleshooting, not just exam scenarios.
+
+Silent mask mismatch in a BGP `network` statement
+  No error, no warning — the command is simply accepted and does
+  nothing useful.
+  Exam: reinforces Lab 067's lesson with a concrete troubleshooting
+  angle — when a BGP-advertised summary "isn't showing up," always
+  compare the EXACT mask in the `network` statement against the EXACT
+  mask of the actual routing-table entry (via `show ip route`), rather
+  than assuming a general/approximate match is good enough.
+  Real world: this is a realistic, easy-to-make typo (255.0.0.0 vs.
+  255.255.0.0 differ by exactly one octet) — always verify a BGP
+  advertisement actually appears in `show ip bgp` after configuring it,
+  rather than assuming the `network` command alone guarantees success.
+
+==================================================
+END OF LAB
+==================================================

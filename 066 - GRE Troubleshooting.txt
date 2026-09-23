@@ -1,0 +1,303 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 066 - GRE Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot four misconfigurations — two per router — across the GRE
+tunnel + EIGRP setup from Lab 065 (GRE): on R1, a tunnel destination
+pointing at the wrong (tunnel, not real) address causing a "recursive
+routing" error, and an EIGRP network statement covering the wrong
+network; on R2, a tunnel source pointing at the wrong (inside, not
+service-provider-facing) interface, and a missing static route to
+reach the tunnel destination.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 065 — see [gre.txt](gre.txt) for the full diagram
+and addressing: R1 and R2 each connect to their own service provider
+(SPR1, SPR2) with no direct physical link between them, a GRE tunnel
+(Tunnel0, 192.168.1.0/30) built on top, and EIGRP AS 100 running over
+both the internal LANs and the tunnel itself. Nothing physically
+changed — two GRE/EIGRP-related configuration problems per router were
+introduced.
+
+==================================================
+PROBLEM 1 - R1: TUNNEL DESTINATION SET TO THE WRONG ADDRESS
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip interface brief      Tunnel0 is up/down, and IOS logs a "temporarily
+                             disabled due to recursive routing" error — a common,
+                             specific tunnel misconfiguration symptom.
+show interface tunnel 0       The tunnel SOURCE (Serial0/0/0) is correct, but the
+                             tunnel DESTINATION is wrong — it's configured as
+                             192.168.1.2, which is R2's TUNNEL interface address,
+                             not R2's real physical address. This is exactly what
+                             causes recursive routing: the router tries to route
+                             the tunnel's own encapsulated traffic back through
+                             the tunnel itself to reach that destination, since
+                             192.168.1.2 is only reachable THROUGH the tunnel —
+                             a routing loop by definition.
+
+---------------- Fix (R1) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface tunnel 0
+ tunnel destination 20.0.0.2              Corrects the destination to R2's REAL,
+                                        physical S0/0/0 address — resolving the
+                                        recursive routing condition, since this
+                                        address is reachable via ordinary IP
+                                        routing, not through the tunnel itself.
+
+==================================================
+PROBLEM 2 - R1: EIGRP ADVERTISING THE WRONG NETWORK FOR THE TUNNEL
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip protocols             Shows EIGRP routing for 10.0.1.0/24 (correct — the
+                             internal LAN) and 10.0.0.0/30 — this second one is
+                             the fault: 10.0.0.0/30 is the network on R1's
+                             Serial0/0/0 (the tunnel SOURCE interface, facing the
+                             service provider), not the tunnel network itself
+                             (192.168.1.0/30). EIGRP should be activated on the
+                             tunnel interface, not the physical interface
+                             underneath it.
+
+---------------- Fix (R1) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+router eigrp 100
+ no network 10.0.0.0 0.0.0.3              Removes the incorrect network
+                                        statement.
+ network 192.168.1.0 0.0.0.3              Adds the correct one, activating
+                                        EIGRP on the actual tunnel interface.
+
+At this point R1's two faults are both fixed, but the tunnel still
+won't be up — two separate problems remain on R2.
+
+==================================================
+PROBLEM 3 - R2: TUNNEL SOURCE SET TO THE WRONG INTERFACE
+==================================================
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip protocols             EIGRP is correctly activated for 10.0.2.0/24 (G0/0)
+                             and 192.168.1.0/30 (the tunnel interface) — R2's
+                             EIGRP configuration itself has no fault.
+show interface tunnel 0       The tunnel DESTINATION is correct, but the tunnel
+                             SOURCE is wrong — it's configured as
+                             GigabitEthernet0/0 (the inside interface facing
+                             PC2's LAN) instead of Serial0/0/0 (the interface
+                             actually facing the service provider, which is what
+                             the tunnel traffic needs to be sourced from to reach
+                             R1 at all).
+
+---------------- Fix (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface tunnel 0
+ tunnel source Serial0/0/0                 Corrects the tunnel source to the
+                                        interface that actually faces the
+                                        service provider network.
+show ip interface brief                    The tunnel still isn't up — one more
+                                        fault remains.
+
+==================================================
+PROBLEM 4 - R2: MISSING STATIC ROUTE TO THE TUNNEL DESTINATION
+==================================================
+
+---------------- Diagnose (R2) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route             No route exists to reach 10.0.0.2 — R1's real tunnel
+                          destination address. Without this, the underlying GRE
+                          traffic has no path to R1 at all, exactly the same
+                          class of prerequisite fault covered in Lab 065.
+
+---------------- Fix (R2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+exit
+ip route 0.0.0.0 0.0.0.0 20.0.0.1            Adds the missing static default
+                                            route via SPR2, giving R2 a path to
+                                            reach R1's real address.
+
+---------------- Verify (R2) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show ip interface brief      Tunnel0 is now up.
+ping 192.168.1.1              Succeeds — the tunnel is fully functional.
+show ip route                  Confirms R1's internal network (10.0.1.0/24) is
+                             now being learned via EIGRP over the tunnel.
+
+---------------- Final verification ----------------
+
+---------------- PC2 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 10.0.1.100          Succeeds — full end-to-end reachability from PC2,
+                         through R2, across the (now correctly configured) GRE
+                         tunnel, to R1, and finally to PC1.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief                          Confirms tunnel interface
+                                                  up/down state, and reveals
+                                                  the "recursive routing"
+                                                  error message when present.
+show interface tunnel 0                           Confirms configured tunnel
+                                                  source and destination
+                                                  addresses.
+show ip protocols                                 Confirms which networks
+                                                  EIGRP is actually activated
+                                                  on — useful for catching a
+                                                  network statement pointed at
+                                                  the wrong interface/subnet.
+show ip route                                    Confirms both static routes
+                                                  (reaching the tunnel
+                                                  destination) and EIGRP-
+                                                  learned routes (across the
+                                                  tunnel).
+ping <ip>                                          Verify reachability at each
+                                                  stage.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R1's tunnel destination pointing at R2's TUNNEL
+  address (192.168.1.2) instead of its real physical address
+  (20.0.0.2) — the specific cause of a "recursive routing" error.
+✓ Found and fixed R1's EIGRP configuration advertising the physical
+  S0/0/0 subnet (10.0.0.0/30) instead of the actual tunnel network
+  (192.168.1.0/30).
+✓ Found and fixed R2's tunnel source pointing at its inside interface
+  (G0/0) instead of the service-provider-facing interface (S0/0/0).
+✓ Found and fixed R2 missing a static route to reach R1's real tunnel
+  destination address entirely.
+✓ Verified the tunnel came up, EIGRP learned R1's internal network over
+  it, and confirmed full end-to-end connectivity from PC2 to PC1.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• "Recursive routing" error — occurs specifically when a tunnel's
+  destination address is only reachable THROUGH the tunnel itself
+  (e.g. mistakenly set to the far end's tunnel address instead of its
+  real physical address), creating a routing loop the router detects
+  and protects against by disabling the tunnel; recognizable both by
+  the tunnel interface's up/down state and by the explicit
+  "temporarily disabled due to recursive routing" log message.
+• Tunnel destination must be a REAL, independently-routable address —
+  never the far end's own tunnel (virtual) address, since that address
+  only exists reachable via the tunnel that hasn't come up yet — a
+  circular dependency if configured wrong.
+• EIGRP `network` statement pointed at the wrong subnet — R1's fault
+  (advertising the physical S0/0/0 subnet instead of the tunnel
+  network) shows that a network statement can be syntactically valid
+  and still be activating EIGRP on entirely the wrong interface for the
+  intended purpose — always cross-check `show ip protocols`' listed
+  networks against which interface/purpose they SHOULD correspond to.
+• Tunnel source must be the interface that actually provides
+  reachability to the far end — R2's fault (sourcing from the inside
+  LAN interface instead of the WAN-facing one) demonstrates that an
+  incorrectly-sourced tunnel fails even though the destination address
+  itself is entirely correct.
+• Missing route to the tunnel destination — the same underlying-
+  reachability prerequisite from Lab 065, reintroduced here as a
+  distinct, separately-diagnosable fault on R2, independent of the
+  tunnel source/destination configuration itself being correct.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed four separate faults across the Lab
+065 GRE tunnel + EIGRP setup: R1's tunnel destination pointing at the
+wrong (tunnel, not real) address, R1's EIGRP network statement covering
+the wrong subnet, R2's tunnel source pointing at the wrong (inside, not
+WAN-facing) interface, and R2 missing a static route to reach the
+tunnel destination. The GRE tunnel came up correctly after all four
+fixes, EIGRP successfully learned R1's internal network over the
+tunnel, and a final ping from PC2 to PC1 confirmed full end-to-end
+connectivity restored.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Recursive routing from a wrong tunnel destination
+  A specific, self-referential misconfiguration — pointing the tunnel
+  destination at an address that only exists because of the tunnel
+  itself.
+  Exam: memorize the exact error message text ("recursive routing")
+  and its cause — mistaking the far end's TUNNEL address for its REAL
+  address in the `tunnel destination` command — as a directly testable,
+  specific GRE fault.
+  Real world: this remains one of the most common real-world GRE
+  misconfigurations, especially for engineers new to tunneling — always
+  double-check that `tunnel destination` references the far router's
+  underlying, independently-routable interface, never its own tunnel
+  interface address.
+
+EIGRP network statement pointed at the wrong subnet, not just "wrong"
+  A `network` statement can be perfectly valid syntax while still
+  activating EIGRP on a completely unintended interface.
+  Exam: expect scenario questions showing correct-looking `show ip
+  protocols` output that still needs careful comparison against the
+  INTENDED design (which interfaces are supposed to run EIGRP) rather
+  than just checking that "some" networks are listed.
+  Real world: this exact fault — accidentally advertising a WAN/
+  transit subnet instead of an intended tunnel or LAN network — can
+  leak internal transit addressing unintentionally, which is also a
+  minor real-world security/hygiene concern beyond just "does EIGRP
+  work."
+
+Tunnel source pointed at the wrong (inside) interface
+  The tunnel's source must be the interface that actually has a path to
+  the far end — an inside/LAN-facing interface typically doesn't.
+  Exam: know this is a distinct fault from a wrong tunnel destination
+  — both produce a non-functioning tunnel, but require checking
+  different specific configuration lines (`tunnel source` vs. `tunnel
+  destination`) to diagnose correctly.
+  Real world: this kind of mistake often happens when copy-pasting
+  tunnel configuration between routers with different interface
+  layouts — always confirm the SPECIFIC interface referenced in
+  `tunnel source` genuinely has reachability to the tunnel destination
+  address on this particular router, not just that some interface name
+  was typed.
+
+==================================================
+END OF LAB
+==================================================

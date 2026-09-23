@@ -1,0 +1,359 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 069 - HSRP
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure HSRP (Hot Standby Router Protocol), a Cisco-proprietary FHRP
+(First Hop Redundancy Protocol — VRRP is the vendor-neutral standard
+equivalent), providing default-gateway redundancy for two VLANs. PCs
+in VLAN 10 use a shared virtual IP as their default gateway, actively
+served by R1 (R2 standing by); PCs in VLAN 20 use a different virtual
+IP, actively served by R2 this time (R1 standing by) — deliberately
+splitting active duty between the two routers to achieve basic load
+balancing, rather than leaving one router completely idle. Configure
+HSRP version 2, adjust priority to control which router is active, and
+enable preemption so a recovered router reclaims its active role.
+
+==================================================
+TOPOLOGY
+==================================================
+
+   VLAN 10 (10.10.10.0/24)                    VLAN 20 (10.20.20.0/24)
+  +------+  +------+                         +------+  +------+
+  | PC1  |  | PC2  |                         | PC3  |  | PC4  |
+  +--+---+  +--+---+                         +--+---+  +--+---+
+     |         |                                |         |
+     +----+----+                                +----+----+
+          |                                           |
+     +----+----+                                 +----+----+
+     |   SW    |----(trunk, both VLANs)----------|   SW    |
+     +----+----+                                 +----+----+
+          |                                           |
+    G0/1  |  G0/2                               G0/1  |  G0/2
+   +------+  +------+                          +------+  +------+
+   |  R1  |  |  R1  |                          |  R2  |  |  R2  |
+   +------+  +------+                          +------+  +------+
+   (same physical R1, two interfaces — one per VLAN; same for R2)
+
+  VLAN 10 gateway group (HSRP group 10):          VLAN 20 gateway group (HSRP group 20):
+    Virtual IP:  10.10.10.1                          Virtual IP:  10.20.20.1
+    R1 (G0/1):   10.10.10.2 — ACTIVE (priority 110)   R2 (G0/1):   10.20.20.2 — ACTIVE (default
+    R2 (G0/2):   10.10.10.3 — STANDBY (default 100)                priority 100)
+                                                       R1 (G0/2):   10.20.20.3 — STANDBY (priority 90)
+
+Both R1 and R2 connect to both VLAN 10 and VLAN 20 (via trunked
+switches), each using a separate physical interface per VLAN — R1 uses
+G0/1 for VLAN 10 and G0/2 for VLAN 20; R2 uses G0/2 for VLAN 10 and
+G0/1 for VLAN 20 (the interface numbering happens to be reversed
+between the two routers, but the VLAN each interface serves is what
+matters). PC1/PC2 sit in VLAN 10, using 10.10.10.1 as their default
+gateway; PC3/PC4 sit in VLAN 20, using 10.20.20.1. Both HSRP groups
+ultimately provide a path out to an external server (15.0.0.1) via
+further upstream routing not covered in this lab.
+
+==================================================
+STEP 1 - CONFIGURE HSRP FOR VLAN 10 ON R1 (ACTIVE)
+==================================================
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/1         R1's VLAN 10-facing interface. HSRP is
+                                    configured at the interface level.
+ standby 10 ip 10.10.10.1             Configures HSRP group 10 with virtual IP
+                                    10.10.10.1 — an address not tied to either
+                                    router's own physical interface; PCs use
+                                    this as their default gateway, and
+                                    whichever router is currently ACTIVE
+                                    answers ARP requests for it with its own
+                                    MAC address, so traffic actually reaches
+                                    that router.
+show standby                          Checked BEFORE changing priority — shows
+                                    the default HSRP priority is 100.
+ standby 10 priority 110               Raises R1's priority above the default,
+                                    ensuring R1 becomes (and stays) the ACTIVE
+                                    router for group 10 — higher priority wins.
+ standby version 2                     Switches to HSRP version 2, which offers
+                                    minor improvements over version 1. Unlike
+                                    version 1's `standby <group> ...` syntax,
+                                    version 2's `standby version 2` command
+                                    itself doesn't take a group number — it
+                                    applies to every HSRP group configured on
+                                    that interface at once.
+ standby 10 preempt                    Enables preemption: if R1 (currently
+                                    active) fails and later recovers, it will
+                                    reclaim the active role automatically.
+                                    Without preemption, R2 would remain active
+                                    permanently even after R1 comes back — only
+                                    ever configured on the router intended to
+                                    be the "normal" active one.
+
+==================================================
+STEP 2 - CONFIGURE HSRP FOR VLAN 10 ON R2 (STANDBY) AND TEST
+==================================================
+
+---------------- R2 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/2         R2's VLAN 10-facing interface.
+ standby version 2
+ standby 10 ip 10.10.10.1             Same group number and virtual IP as R1 —
+                                    required for both routers to participate
+                                    in the same HSRP group. No priority change
+                                    needed here (R1's is already higher), and
+                                    no `preempt` needed either — preemption is
+                                    only configured on the router that SHOULD
+                                    reclaim active status, which is R1.
+
+---------------- Verify (PC1) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+ping 10.10.10.1           Succeeds — confirms the virtual IP itself is reachable
+                         (answered by whichever router is currently active).
+ping 15.0.0.1              Succeeds — confirms full reachability out to the
+                         external server.
+traceroute 15.0.0.1        Shows R1's REAL interface address (10.10.10.2, not
+                         the virtual 10.10.10.1) as the first hop — confirming
+                         traceroute reveals which physical router is actually
+                         handling the traffic, unlike a simple ping to the
+                         virtual address.
+
+---------------- Test failover ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+reload (on R1)                   Simulates R1 failing/rebooting.
+show standby (on R2)              Confirms R2 is now ACTIVE for group 10, having
+                                 taken over in R1's absence.
+traceroute 15.0.0.1 (on PC1)       Now shows R2's real address (10.10.10.3) as
+                                 the first hop, confirming the failover actually
+                                 redirected traffic.
+(wait ~10 seconds for R1 to finish rebooting)
+show standby (on R1)               Confirms R1 has reclaimed the ACTIVE role for
+                                 group 10, thanks to `preempt` being enabled.
+traceroute 15.0.0.1 (on PC1)       Now shows R1's real address (10.10.10.2)
+                                 again, confirming R1 successfully preempted R2
+                                 and resumed its normal active role.
+
+==================================================
+STEP 3 - CONFIGURE HSRP FOR VLAN 20 (R2 ACTIVE, R1 STANDBY — THE OPPOSITE SETUP)
+==================================================
+
+This time, priority is adjusted differently for variety: rather than
+raising the active router's (R2's) priority above default, the STANDBY
+router's (R1's) priority is instead lowered below default — both
+approaches achieve the same relative outcome (R2 wins the priority
+comparison).
+
+---------------- R2 (active for VLAN 20) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/1         R2's VLAN 20-facing interface.
+ standby version 2
+ standby 20 ip 10.20.20.1
+ standby 20 preempt                    Configured here since R2 is the intended
+                                    normal-active router for this group.
+                                    Priority is left at the default (100) —
+                                    unchanged.
+
+---------------- R1 (standby for VLAN 20) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/2         R1's VLAN 20-facing interface.
+ standby version 2
+ standby 20 ip 10.20.20.1
+ standby 20 priority 90                Lowered BELOW the default 100 — since R2
+                                    keeps its default priority of 100, this
+                                    guarantees R2 wins the active-router
+                                    comparison for group 20.
+
+---------------- Verify (PC3) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+ping 10.20.20.1           Succeeds — the virtual IP is reachable.
+ping 15.0.0.1               Succeeds.
+traceroute 15.0.0.1          Shows R2's real address (10.20.20.2) as the first
+                            hop, confirming R2 is indeed the active router for
+                            VLAN 20, exactly as intended.
+
+---------------- Test failover ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+reload (on R2)                   Simulates R2 failing.
+traceroute 15.0.0.1 (on PC3)       (after a short wait) Now shows R1's real
+                                 address (10.20.20.3) as the first hop — R1 took
+                                 over as active for group 20.
+(wait ~10 seconds for R2 to finish rebooting)
+traceroute 15.0.0.1 (on PC3)       Back to showing R2's real address
+                                 (10.20.20.2) — R2 preempted and reclaimed its
+                                 active role for group 20.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show standby                                     Shows HSRP group status
+                                                  (active/standby role,
+                                                  priority, virtual IP) for
+                                                  every group on the router —
+                                                  the primary HSRP
+                                                  verification command.
+show running-config                              Verify `standby` commands per
+                                                  interface (version, group,
+                                                  virtual IP, priority,
+                                                  preempt).
+ping <virtual-ip>                                  Confirms the virtual gateway
+                                                  address itself is reachable.
+traceroute <destination>                          Reveals which router's REAL
+                                                  address is actually handling
+                                                  traffic — the key tool for
+                                                  confirming HSRP failover/
+                                                  preemption actually took
+                                                  effect.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured HSRP group 10 on R1's VLAN 10 interface (virtual IP
+  10.10.10.1, priority raised to 110, version 2, preemption enabled),
+  making R1 the active router for VLAN 10, and configured the matching
+  standby-side settings on R2 (same group/virtual IP, default priority,
+  no preempt needed).
+✓ Verified VLAN 10's HSRP setup with ping/traceroute from PC1,
+  including confirming R1 as active via traceroute showing its real
+  address, not the virtual one.
+✓ Tested failover by reloading R1: confirmed R2 became active, then
+  confirmed R1 reclaimed active status via preemption once it finished
+  rebooting.
+✓ Configured the mirrored setup for VLAN 20 — R2 active (default
+  priority, preempt enabled) and R1 standby (priority deliberately
+  lowered to 90 instead of raising R2's) — achieving basic load
+  balancing by splitting which router is "normally" active across the
+  two VLANs.
+✓ Verified and failover-tested VLAN 20's HSRP setup identically,
+  confirming R2 as the default active router and R1 correctly taking
+  over during R2's simulated outage, with R2 reclaiming active status
+  via preemption afterward.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• FHRP (First Hop Redundancy Protocol) — a general category of
+  protocols providing default-gateway redundancy to end hosts; HSRP
+  (Cisco-proprietary) and VRRP (open, vendor-neutral standard) are the
+  two most commonly referenced examples.
+• HSRP virtual IP — a shared IP address, not tied to either physical
+  router's own interface address, configured as the default gateway on
+  end hosts; whichever router is currently ACTIVE answers ARP requests
+  for it, directing traffic to itself.
+• HSRP priority — determines which router becomes/stays ACTIVE for a
+  given group; higher priority wins (default 100), adjustable either by
+  raising the intended active router's priority above default or
+  lowering the intended standby router's priority below it — both
+  achieve the same relative outcome.
+• `standby version 2` — HSRP version 2 (offering minor improvements
+  over version 1); notably, unlike version 1's per-group syntax, the
+  version command itself applies to ALL HSRP groups configured on that
+  interface at once, rather than needing to be set per group.
+• Preemption (`standby <group> preempt`) — controls whether a
+  recovered router automatically reclaims the active role once it comes
+  back online; without it, a router that failed over to standby stays
+  standby permanently even after recovering, until the current active
+  router itself fails.
+• Load balancing via multiple HSRP groups with swapped active/standby
+  roles — rather than leaving one router entirely idle, different VLANs
+  (or subnets) can each run their own independent HSRP group with a
+  DIFFERENT router as the normally-active one, spreading real traffic
+  load across both routers under normal conditions while each still
+  backs up the other.
+• `traceroute` as an HSRP verification tool — since PCs only ever see
+  the shared virtual IP as their gateway, `traceroute` (which reveals
+  each hop's REAL address) is the practical way to confirm which
+  physical router is actually forwarding traffic at any given moment —
+  a simple `ping` to the virtual IP alone can't distinguish this.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured two independent HSRP groups providing default-
+gateway redundancy with built-in load balancing: group 10 (VLAN 10,
+virtual IP 10.10.10.1) with R1 as the normal active router (priority
+110) and R2 standby, and group 20 (VLAN 20, virtual IP 10.20.20.1) with
+R2 as the normal active router (default priority) and R1 standby
+(priority lowered to 90). Both groups were configured with HSRP version
+2 and preemption on their respective normally-active router, and both
+were failover-tested by reloading the active router and confirming
+(via `traceroute`, since it reveals real rather than virtual addresses)
+that the standby router took over, then that the original router
+reclaimed active status once it finished rebooting.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Virtual IP vs. each router's real interface address
+  Three IP addresses exist per HSRP group/subnet: the shared virtual
+  gateway address, plus each router's own distinct real address on
+  that same subnet.
+  Exam: expect a diagram or `show standby` output requiring you to
+  distinguish the virtual IP (what end hosts use as their gateway) from
+  each router's own configured interface address (what `traceroute`
+  actually reveals) — a common source of confusion for newcomers to
+  FHRPs.
+  Real world: this three-address model is exactly why `traceroute` (not
+  `ping`) is the standard tool real network engineers reach for when
+  confirming which physical device in an HSRP/VRRP pair is currently
+  handling traffic.
+
+Priority: raise the active, or lower the standby — same effect
+  Two equally valid ways to achieve the same relative priority
+  ordering, deliberately both demonstrated in this lab.
+  Exam: don't expect only one "correct" pattern — recognize both
+  approaches (raising the intended active router above 100, or
+  lowering the intended standby router below 100) as valid and
+  equivalent for determining which router wins.
+  Real world: which approach is used in practice often comes down to
+  organizational convention/documentation clarity — some teams
+  standardize on always adjusting the active router's priority up, to
+  make `show standby` output self-explanatory at a glance.
+
+Preemption only needed on the intended "normal" active router
+  Configuring `preempt` on the standby-intended router isn't wrong, but
+  is functionally pointless in the two-group setups shown here.
+  Exam: know preemption is what causes a RECOVERED router to reclaim
+  active status — it must be configured on whichever router you want
+  to automatically become active again after recovering, which in a
+  simple two-router active/standby design is the router intended to be
+  active under normal conditions.
+  Real world: preemption is usually desired in production (so a known-
+  good "primary" router resumes its normal role after a temporary
+  outage), but is occasionally deliberately disabled in specific
+  designs where switching back immediately after a brief recovery
+  could itself be disruptive (e.g. flapping links) — worth knowing it's
+  a deliberate design choice, not always a default "on" behavior to
+  assume.
+
+==================================================
+END OF LAB
+==================================================

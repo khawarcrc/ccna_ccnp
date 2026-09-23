@@ -1,0 +1,327 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 057 - OSPFv3 for IPv6
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure OSPFv3 (the IPv6 version of OSPF) on the same five-router,
+three-area topology used in Lab 055/056, highlighting the one major
+configuration difference from OSPFv2: OSPFv3 is activated per-interface
+directly, rather than via `network` statements inside a router
+configuration mode. Also configure a default route on R1 (representing
+its connection to the Internet) and advertise it into OSPFv3 for the
+other routers to learn.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same five-router, three-area physical topology and area assignment as
+Lab 055/056 — see
+[ospf_part2_multi_area.txt](ospf_part2_multi_area.txt) for the full
+diagram: R4-R1-R2 in Area 1, R2-R3 forming the Area 0 backbone link,
+R3-R5 in Area 2, R2 and R3 as ABRs. This lab reconfigures the same
+topology for IPv6/OSPFv3 instead of IPv4/OSPFv2 — the physical layout
+and per-interface area assignments are identical, only the addressing
+family and configuration commands change.
+
+Router IDs (still IPv4-formatted, even though this is IPv6 routing) —
+via Loopback0, as in the earlier OSPF labs:
+R1 = 1.1.1.1, R2 = 2.2.2.2, R3 = 3.3.3.3, R4 = 4.4.4.4, R5 = 5.5.5.5.
+
+Note: the source captions did not clearly state the exact IPv6
+addresses configured on the inter-router links (G0/0/G0/1) — this lab's
+focus and the transcript's actual content is the OSPFv3 routing
+configuration itself, not IPv6 addressing, so those links are assumed
+pre-addressed before this lab begins; only the router ID loopbacks and
+the final default-route address are given explicitly in the source and
+are reproduced accurately below.
+
+==================================================
+STEP 1 - CONFIGURE A LOOPBACK (ROUTER ID) ON EACH ROUTER
+==================================================
+
+Even though OSPFv3 routes IPv6 traffic, the OSPF router ID is still a
+32-bit, IPv4-formatted dotted-decimal number — identical rule set to
+OSPFv2 (manually configured takes precedence; otherwise the highest
+IPv4 address on a loopback interface; otherwise the highest IPv4
+address on any other interface).
+
+---------------- R1 through R5 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+R1: interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+R2: interface Loopback0
+ ip address 2.2.2.2 255.255.255.255
+R3: interface Loopback0
+ ip address 3.3.3.3 255.255.255.255
+R4: interface Loopback0
+ ip address 4.4.4.4 255.255.255.255
+R5: interface Loopback0
+ ip address 5.5.5.5 255.255.255.255
+
+==================================================
+STEP 2 - ENABLE OSPFv3 ON EACH ROUTER, PER INTERFACE
+==================================================
+
+The major difference from OSPFv2: instead of activating OSPF on
+interfaces via `network` statements typed inside `router ospf`
+configuration mode, OSPFv3 is activated directly on each interface,
+inside interface configuration mode.
+
+---------------- R1 (Area 1, both interfaces) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ipv6 router ospf 1                  Simply typing `ipv6` in front of the familiar
+                                    OSPFv2 command creates OSPFv3 process 1 — but
+                                    unlike OSPFv2, nothing else is actually
+                                    configured from inside this mode in this lab;
+                                    it exists mainly as a container for
+                                    process-wide settings (like the
+                                    `default-information originate` command used
+                                    later).
+exit
+interface GigabitEthernet0/0
+ ipv6 ospf 1 area 1                  Activates OSPFv3 process 1 on this interface,
+                                    in Area 1 — directly at the interface level.
+interface GigabitEthernet0/1
+ ipv6 ospf 1 area 1
+
+---------------- R4 (Area 1 — demonstrating the process can be auto-created) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ipv6 ospf 1 area 1                  This command is entered directly at the
+                                    interface, WITHOUT first running `ipv6 router
+                                    ospf 1` in global configuration mode — IOS
+                                    automatically creates OSPFv3 process 1 on the
+                                    router as a side effect, confirmed by `show
+                                    run` afterward. This demonstrates that, unlike
+                                    OSPFv2 where `router ospf <id>` is the natural
+                                    starting point, OSPFv3's process can be
+                                    implicitly created straight from interface
+                                    configuration mode.
+
+---------------- R2 (ABR: Area 1 + Area 0) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ipv6 ospf 1 area 1                  The R1-facing interface, Area 1.
+interface GigabitEthernet0/1
+ ipv6 ospf 1 area 0                  The R3-facing interface, Area 0 — makes R2
+                                    an ABR, exactly as in the OSPFv2 labs.
+
+---------------- R3 (ABR: Area 0 + Area 2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ipv6 ospf 1 area 0                  The R2-facing interface, Area 0.
+interface GigabitEthernet0/1
+ ipv6 ospf 1 area 2                  The R5-facing interface, Area 2.
+
+---------------- R5 (Area 2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ipv6 ospf 1 area 2
+
+==================================================
+STEP 3 - VERIFY OSPFv3 NEIGHBORS AND ROUTES (ON R5)
+==================================================
+
+The equivalent OSPFv2 `show ip ...` commands all have direct OSPFv3
+counterparts, substituting `ipv6` for `ip`.
+
+---------------- R5 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ipv6 protocols          Gives fairly minimal information compared to its
+                             OSPFv2 counterpart, but does show which interfaces
+                             are enabled for OSPFv3 and in which areas.
+show ipv6 ospf                Gives more detail, including OSPF timers, and
+                             confirms the router ID — shown here as 5.5.5.5,
+                             inherited from Loopback0's IPv4 address exactly as
+                             expected.
+show ipv6 ospf neighbor       Confirms R5's OSPFv3 neighbor relationship with R3.
+show ipv6 route               Shows the OSPF-learned IPv6 routes, marked "OI"
+                             (OSPF Inter-Area) since all of these networks lie
+                             outside R5's own Area 2.
+
+==================================================
+STEP 4 - CONFIGURE A DEFAULT ROUTE ON R1 AND ADVERTISE IT INTO OSPFv3
+==================================================
+
+R1 represents the router connected to the Internet in this topology —
+its default route needs to be shared with the rest of the OSPFv3
+domain.
+
+---------------- R1 ----------------
+
+Command                                                Explanation
+-----------------------------------------------------------------------------------------
+ipv6 route ::/0 2001:DB8:1:1::2                          Creates a static default
+                                                        route — `::/0` is IPv6's
+                                                        equivalent of IPv4's
+                                                        `0.0.0.0 0.0.0.0`
+                                                        (matches any destination),
+                                                        pointing to a next hop
+                                                        representing R1's
+                                                        Internet-facing connection.
+show ipv6 route                                          Confirms the new static
+                                                        default route is present
+                                                        in R1's own routing table.
+
+ipv6 router ospf 1                                       Re-enter OSPFv3
+                                                        configuration mode.
+ default-information originate                            Advertises R1's default
+                                                        route into OSPFv3 — the
+                                                        exact same command name
+                                                        used for this purpose in
+                                                        OSPFv2 for IPv4.
+
+---------------- Verify (R2) ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show ipv6 route              The default route now appears at the top of R2's
+                             IPv6 routing table, learned via OSPFv3 from R1.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ipv6 protocols                               Shows OSPFv3-enabled
+                                                  interfaces and their areas.
+show ipv6 ospf                                     Shows OSPFv3 process detail,
+                                                  timers, and router ID.
+show ipv6 ospf neighbor                            Confirms OSPFv3 neighbor
+                                                  adjacencies.
+show ipv6 route                                    Shows the IPv6 routing table,
+                                                  including OSPF-learned routes
+                                                  and the advertised default
+                                                  route.
+show running-config                               Verify `ipv6 ospf <id> area
+                                                  <n>` per-interface commands and
+                                                  the `default-information
+                                                  originate` line.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured an IPv4-formatted loopback (router ID) on all five
+  routers, identical in principle to the OSPFv2 labs.
+✓ Enabled OSPFv3 process 1 directly at the interface level on every
+  router (`ipv6 ospf 1 area <n>`), matching the same per-interface area
+  assignments used in the OSPFv2 multi-area topology (Area 1, Area 0
+  backbone, Area 2), and observed that the OSPFv3 process is
+  automatically created even if `ipv6 router ospf` was never explicitly
+  run first.
+✓ Verified OSPFv3 neighbor adjacency and inter-area route learning on
+  R5 using the `show ipv6 ...` command family — the direct IPv6
+  counterparts of the familiar OSPFv2 `show ip ...` commands.
+✓ Configured a static IPv6 default route on R1 and advertised it into
+  OSPFv3 with `default-information originate`, verifying it appeared on
+  R2's routing table.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• OSPFv3 — the version of OSPF used to route IPv6 traffic, largely
+  similar to OSPFv2 in concept (areas, ABRs, router IDs, neighbor
+  states) but with IPv6-specific commands (the `ipv6` prefix throughout)
+  and one major structural difference in how interfaces are activated.
+• Per-interface OSPFv3 activation (`ipv6 ospf <process-id> area <n>`) —
+  unlike OSPFv2's `network` statement approach (configured inside
+  `router ospf` mode, matching interfaces by address range), OSPFv3 is
+  enabled directly on each interface in interface configuration mode —
+  arguably simpler, since there's no wildcard-mask range matching
+  involved at all.
+• OSPFv3 process auto-creation — running `ipv6 ospf <id> area <n>` on
+  an interface automatically creates that OSPFv3 process on the router
+  if it doesn't already exist, without needing to first explicitly run
+  `ipv6 router ospf <id>` in global configuration mode.
+• OSPFv3 router ID remains IPv4-formatted — even though OSPFv3 routes
+  IPv6 traffic exclusively, the router ID itself is still a 32-bit
+  dotted-decimal (IPv4-style) value, using the identical selection rules
+  as OSPFv2 (manual > highest loopback IPv4 address > highest physical
+  interface IPv4 address).
+• `show ipv6 ...` command family — direct IPv6 counterparts of the
+  familiar OSPFv2 `show ip ...` commands (`show ipv6 protocols`, `show
+  ipv6 ospf`, `show ipv6 ospf neighbor`, `show ipv6 route`), used
+  identically in concept, just scoped to the IPv6/OSPFv3 process.
+• `default-information originate` — advertises a locally-configured
+  default route into OSPF so other routers in the domain learn it;
+  identical command name and purpose in both OSPFv2 (IPv4) and OSPFv3
+  (IPv6).
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully reconfigured the five-router, three-area topology from Lab
+055/056 for IPv6, enabling OSPFv3 directly at the interface level on
+every router with matching area assignments to the original OSPFv2
+design, and verifying full neighbor adjacency and inter-area route
+learning via the `show ipv6 ...` command family. Configured a static
+IPv6 default route on R1 (`ipv6 route ::/0 2001:DB8:1:1::2`) and
+advertised it into OSPFv3 with `default-information originate`,
+confirming it was learned correctly on R2.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+OSPFv3's per-interface activation vs. OSPFv2's `network` statement
+  The single biggest structural difference between the two versions.
+  Exam: memorize that OSPFv3 uses `ipv6 ospf <process-id> area <area>`
+  directly on the interface — no wildcard mask, no `network` command at
+  all — while OSPFv2 still uses `network <address> <wildcard> area
+  <area>` inside `router ospf` mode. A question describing OSPFv3
+  configuration via a `network` statement is describing OSPFv2 syntax
+  by mistake.
+  Real world: this per-interface model is arguably clearer to audit in
+  a running-config — a glance at any single interface's configuration
+  immediately shows its OSPFv3 area membership, without needing to
+  cross-reference a separate `router ospf` block's wildcard-mask ranges.
+
+OSPFv3's router ID is still IPv4-formatted
+  A detail that surprises people expecting an IPv6-native identifier.
+  Exam: know explicitly that the OSPFv3 router ID is a 32-bit,
+  dotted-decimal value — NOT an IPv6 address — using the same
+  selection precedence as OSPFv2.
+  Real world: this is exactly why real IPv6-only networks still commonly
+  configure a small IPv4 loopback address purely to serve as a clean,
+  predictable OSPFv3 router ID, even when no other IPv4 addressing
+  exists anywhere else in the network.
+
+`default-information originate` shared between OSPFv2 and OSPFv3
+  Identical command, same purpose, in both address families.
+  Exam: don't assume every OSPFv2 command needs an IPv6-specific
+  equivalent — some, like this one, carry over unchanged once you're
+  inside the corresponding `ipv6 router ospf` configuration mode.
+  Real world: dual-stack networks (running both IPv4/OSPFv2 and IPv6/
+  OSPFv3 simultaneously) commonly configure this identically on the
+  same Internet-facing router for both protocols, exactly the scenario
+  this lab sets up (R1 as the Internet-connected router for both address
+  families across the two labs).
+
+==================================================
+END OF LAB
+==================================================

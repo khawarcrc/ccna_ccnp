@@ -1,0 +1,483 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 043 - Review Configuration Lab 2
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+A cumulative review lab combining several previously-covered
+technologies on one topology: configure RIPv2 on R1, R2, and R3;
+configure all three routers to send syslog messages to a central
+server; configure PAT (NAT overload) on R1 and R2 so their private LANs
+can reach that server; configure R1 as a DHCP server with two pools
+(one per LAN) plus a DHCP relay agent on R2 so the second LAN's DHCP
+requests can reach R1; and configure SSH access on R1's vty lines. This
+lab's completed configuration is deliberately broken afterward and used
+as the starting point for the next (troubleshooting) lab in the series.
+
+==================================================
+TOPOLOGY
+==================================================
+
+     192.168.1.0/24                                      192.168.2.0/24
+      (DHCP Pool1)                                         (DHCP Pool2)
+ +--------+--------+--------+                       +--------+--------+--------+
+ |  PC1   |  PC2   |  PC3   |                       |  PC4   |  PC5   |  PC6   |
+ +---+----+---+----+---+----+                       +---+----+---+----+---+----+
+     +--------+--------+                                 +--------+--------+
+              |                                                    |
+         +---------+                                          +---------+
+         |   SW1   |                                          |   SW2   |
+         +----+----+                                          +----+----+
+              | G0/0 (inside)                     (inside) G0/0 |
+         +----+----+                                          +----+----+
+         |    R1   |                                          |    R2   |
+         +----+----+                                          +----+----+
+              | G0/1 (outside)                   (outside) G0/1 |
+              |                                                  |
+ =============+==================================================+=============
+                 Shared "Internet" segment -- 1.2.3.0/24
+       (ACLs pre-configured on R1 / R2 / R3 block private / RFC 1918
+                    addresses from crossing this segment)
+ =================================+===============================================
+                                   | G0/0
+                              +----+----+
+                              |    R3   |
+                              +----+----+
+                                   | G0/1
+                              +----+----+
+                              | Server1 |
+                              |3.0.0.100|
+                              +---------+
+                       (syslog destination for R1/R2/R3;
+                        DNS server for both DHCP pools)
+
+PC1, PC2, and PC3 connect via SW1 into R1's G0/0 (inside NAT interface,
+LAN1 192.168.1.0/24). PC4, PC5, and PC6 connect via SW2 into R2's G0/0
+(inside NAT interface, LAN2 192.168.2.0/24). R1's G0/1 and R2's G0/1
+(both marked as NAT "outside") plus one of R3's interfaces all attach to
+a shared 1.2.3.0/24 segment, drawn above as a bus — the same "simulate
+the Internet via ACLs" pattern used in the earlier NAT labs, with
+pre-configured ACLs on R1, R2, and R3 rejecting private (RFC 1918)
+addresses on this segment. R3's other interface connects to Server1
+(3.0.0.100), which acts as both the syslog destination for all three
+routers and the DNS server handed out by R1's DHCP pools.
+
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface   IP Address        Notes
+----------------------------------------------------------------------------------
+PC1-PC3     NIC         (DHCP-assigned)   From Pool1, LAN1 192.168.1.0/24
+PC4-PC6     NIC         (DHCP-assigned)   From Pool2, LAN2 192.168.2.0/24
+R1          G0/0        192.168.1.1       Inside NAT interface, DHCP default-router
+                                          for Pool1, RIP-advertised
+R1          G0/1        1.2.3.1           Outside NAT interface, on the shared
+                                          "Internet" segment, RIP-advertised
+R2          G0/0        192.168.2.1       Inside NAT interface, DHCP default-router
+                                          for Pool2, RIP-advertised
+R2          G0/1        1.2.3.2           Outside NAT interface, on the shared
+                                          "Internet" segment, RIP-advertised
+R3          (LAN side)  1.2.3.3           On the shared "Internet" segment,
+                                          RIP-advertised
+R3          (Server side) 3.0.0.1         Faces Server1's LAN, RIP-advertised
+Server1     --          3.0.0.100         Syslog destination + DNS server for both
+                                          DHCP pools
+
+DHCP pools configured on R1:
+  Pool1: network 192.168.1.0/24, default-router 192.168.1.1,
+         dns-server 3.0.0.100, excluded 192.168.1.1-192.168.1.10
+  Pool2: network 192.168.2.0/24, default-router 192.168.2.1,
+         dns-server 3.0.0.100, excluded 192.168.2.1-192.168.2.10
+
+==================================================
+STEP 1 - CONFIGURE RIPv2 ON R1, R2, AND R3
+==================================================
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router rip                         Enter RIP routing configuration mode.
+ version 2                         Use RIP version 2 (supports subnet masks in
+                                   updates, unlike RIPv1).
+ no auto-summary                   Disable automatic summarization to classful
+                                   network boundaries, so RIPv2 advertises exact
+                                   subnets instead of collapsing them.
+ network 192.168.1.0               Advertise R1's LAN1 network and enable RIP on
+                                   the interface in it.
+ network 1.2.3.0                   Advertise R1's shared "Internet"-segment
+                                   network and enable RIP on the interface in it.
+exit
+
+---------------- R2 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router rip
+ version 2
+ no auto-summary
+ network 192.168.2.0               Advertise R2's LAN2 network.
+ network 1.2.3.0                   Advertise R2's shared "Internet"-segment
+                                   network — required so R2 has a route back to
+                                   R1's outside address for the DHCP relay step
+                                   later in this lab.
+exit
+
+---------------- R3 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router rip
+ version 2
+ no auto-summary
+ network 3.0.0.0                   Advertise R3's Server1-facing network.
+ network 1.2.3.0                   Advertise R3's shared "Internet"-segment
+                                   network.
+exit
+
+RIP convergence isn't instant — allow some time for all routes to
+appear, and confirm with `show ip rip database` on any of the routers.
+
+==================================================
+STEP 2 - CONFIGURE SYSLOG ON R1, R2, AND R3
+==================================================
+
+Only a single command per router is needed.
+
+---------------- R3 ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+logging 3.0.0.100           Configures R3 to send syslog messages to Server1.
+                            The longer equivalent form `logging host 3.0.0.100`
+                            has the identical effect.
+
+---------------- R2 ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+logging 3.0.0.100           Same syslog configuration, on R2.
+
+---------------- R1 ----------------
+
+Command                    Explanation
+-----------------------------------------------------------------------------------------
+logging 3.0.0.100           Same syslog configuration, on R1.
+
+==================================================
+STEP 3 - CONFIGURE PAT (NAT OVERLOAD) ON R1 AND R2
+==================================================
+
+LAN1 (192.168.1.0/24) and LAN2 (192.168.2.0/24) are both private
+networks and cannot be routed across the shared "Internet" segment
+(pre-configured ACLs on R1, R2, and R3 enforce this, the same pattern
+used in the earlier dedicated NAT labs). Each router translates its own
+LAN's addresses to its own outside (G0/1) interface address.
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ip nat inside                                   Mark R1's LAN1-facing interface as
+                                                  NAT inside.
+exit
+interface GigabitEthernet0/1
+ ip nat outside                                  Mark R1's shared-segment-facing
+                                                  interface as NAT outside.
+exit
+access-list 1 permit 192.168.1.0 0.0.0.255        Standard ACL identifying LAN1 as
+                                                  translation-eligible traffic.
+ip nat inside source list 1 interface            Configures PAT: LAN1 traffic
+ GigabitEthernet0/1 overload                      matching ACL 1 is translated to
+                                                  R1's own G0/1 address, shared via
+                                                  port numbers (`overload`).
+
+---------------- R2 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ip nat inside                                   Mark R2's LAN2-facing interface as
+                                                  NAT inside.
+exit
+interface GigabitEthernet0/1
+ ip nat outside                                  Mark R2's shared-segment-facing
+                                                  interface as NAT outside.
+exit
+access-list 1 permit 192.168.2.0 0.0.0.255        Standard ACL identifying LAN2 as
+                                                  translation-eligible traffic.
+ip nat inside source list 1 interface            Configures PAT for LAN2 the same
+ GigabitEthernet0/1 overload                      way, translated to R2's own G0/1
+                                                  address.
+
+==================================================
+STEP 4 - CONFIGURE R1 AS A DHCP SERVER WITH TWO POOLS, AND R2 AS A DHCP RELAY
+==================================================
+
+With NAT/PAT in place, the PCs still have no IP addresses at all — this
+step configures DHCP.
+
+---------------- R1 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+ip dhcp excluded-address 192.168.1.1             Reserves .1-.10 in LAN1 from Pool1's
+ 192.168.1.10                                    lease range (covers R1's own
+                                                  gateway address). Excluded ranges
+                                                  are configured in global
+                                                  configuration mode, not inside the
+                                                  pool itself.
+ip dhcp excluded-address 192.168.2.1             Reserves .1-.10 in LAN2 from Pool2's
+ 192.168.2.10                                    lease range the same way, even
+                                                  though this exclusion is for a
+                                                  network on the far side of R2.
+
+ip dhcp pool POOL1                               Create/enter DHCP pool for LAN1.
+ network 192.168.1.0 255.255.255.0               Define the address range to lease.
+ default-router 192.168.1.1                      Gateway handed to LAN1 clients.
+ dns-server 3.0.0.100                            DNS server handed to LAN1 clients
+                                                  (Server1).
+exit
+
+ip dhcp pool POOL2                               Create/enter DHCP pool for LAN2.
+ network 192.168.2.0 255.255.255.0               Define the address range to lease.
+ default-router 192.168.2.1                      Gateway handed to LAN2 clients —
+                                                  R2's inside interface, since LAN2
+                                                  clients are on R2's subnet, not
+                                                  R1's.
+ dns-server 3.0.0.100                            Same DNS server as Pool1.
+exit
+
+---------------- PC1 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ipconfig /release
+ipconfig /renew        Succeeds immediately — PC1 is directly on R1's LAN1, so its
+                       DHCP discovery broadcast reaches R1 (the DHCP server)
+                       without needing to cross any router.
+
+---------------- PC4 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ipconfig /release
+ipconfig /renew        Fails. PC4 is on LAN2, behind R2 — R1 (the DHCP server) isn't
+                       directly connected to 192.168.2.0/24, so PC4's DHCP
+                       discovery broadcast never reaches it; broadcasts don't cross
+                       router boundaries on their own.
+
+To fix this, R2 needs to relay DHCP broadcasts from LAN2 to R1 as a
+directed (unicast) request.
+
+---------------- R2 ----------------
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0                     Enter R2's LAN2-facing interface —
+                                                  where the DHCP broadcasts from
+                                                  PC4/PC5/PC6 originate.
+ ip helper-address 1.2.3.1                       Configures R2 as a DHCP relay
+                                                  agent: broadcasts received on this
+                                                  interface are forwarded as a
+                                                  unicast to 1.2.3.1 (R1's outside
+                                                  interface — reachable from R2 via
+                                                  RIP across the shared segment).
+exit
+
+---------------- PC4 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ipconfig /renew        Succeeds now — R2 relays the request to R1, R1 leases an
+                       address from Pool2, and the reply is relayed back the same
+                       way.
+
+==================================================
+STEP 5 - CONFIGURE SSH ACCESS ON R1'S VTY LINES
+==================================================
+
+SSH requires: a hostname (already set to R1), a domain name, a local
+user account, a generated RSA key, and the vty lines configured for
+local login over SSH. This lab configures SSH on R1 only, though in
+practice it should be applied to every router/switch.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+hostname R1                                 Not needed here since already set, but
+                                            required for SSH's RSA key generation
+                                            (the key is tied to hostname + domain
+                                            name) if starting from scratch.
+ip domain-name cisco.com                    Sets the domain name, the second piece
+                                            SSH's RSA key generation requires.
+username cisco password CCNA                Creates a local user account for
+                                            authentication (used instead of a
+                                            simple line password).
+crypto key generate rsa                     Generates the RSA key pair SSH needs.
+                                            Prompted for a modulus size — 1024 bits
+                                            was entered.
+
+line vty 0 15                               Enter configuration for all vty lines.
+ login local                                Authenticate incoming connections
+                                            against the local username/password
+                                            database, instead of a single shared
+                                            line password.
+ transport input ssh                        Restrict remote access on these lines
+                                            to SSH only (no Telnet).
+exit
+
+ip ssh version 2                            Explicitly enables SSH version 2 (the
+                                            more secure version, vs. version 1) —
+                                            configured last, as an afterthought,
+                                            from global configuration mode.
+
+---------------- PC1 ----------------
+
+Command                              Result
+-----------------------------------------------------------------------------------------
+ssh -l cisco 192.168.1.1              Opens an SSH session to R1 as user "cisco".
+                                      Prompted for the password (CCNA) — login
+                                      succeeds.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip rip database                             Confirms RIP routes have been
+                                                  learned on a given router.
+show ip route                                    Confirms the full routing table,
+                                                  including RIP-learned routes.
+show running-config                              Verify logging, NAT, DHCP, and SSH
+                                                  configuration lines on each device.
+show ip nat translations                         Confirms active PAT translations on
+                                                  R1/R2 once traffic is generated.
+show ip dhcp binding                             Lists current DHCP leases handed out
+                                                  by R1, across both pools.
+ipconfig /release, ipconfig /renew               Test DHCP leasing/relay from a PC.
+ssh -l <user> <ip>                                Test SSH login from a PC.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured RIPv2 (no auto-summary) on R1, R2, and R3, advertising
+  each router's directly connected networks so the whole topology
+  becomes mutually reachable.
+✓ Configured all three routers to send syslog messages to Server1
+  (3.0.0.100) with a single `logging` command each.
+✓ Configured PAT (NAT overload) on both R1 and R2, each translating
+  its own private LAN to its own outside interface address.
+✓ Configured R1 as a DHCP server with two pools (one per LAN), verified
+  PC1 (same-LAN as the server) leases successfully but PC4 (different
+  LAN, behind R2) initially fails, then fixed it by configuring
+  `ip helper-address` on R2 as a DHCP relay agent.
+✓ Configured SSH access (version 2, local authentication, generated RSA
+  key) on R1's vty lines and verified a successful SSH login from PC1.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• DHCP relay agent (`ip helper-address`) — a router feature that
+  converts DHCP broadcast messages received on one of its interfaces
+  into a unicast request forwarded to a specific DHCP server address,
+  allowing DHCP clients on a subnet with no local DHCP server to still
+  reach a DHCP server elsewhere in the network, since broadcasts
+  otherwise never cross a router boundary on their own.
+• Cumulative/integrated configuration — this lab demonstrates that
+  RIP, syslog, NAT, DHCP, and SSH are independent features that
+  typically coexist on the same production router simultaneously, each
+  configured and verified separately but all active together, rather
+  than being mutually exclusive lab topics.
+• RIP and NAT/DHCP interaction — RIP must correctly advertise the
+  "outside"/shared-segment network for a DHCP relay agent's unicast
+  request to actually reach the DHCP server, since `ip helper-address`
+  relies on ordinary IP routing (via RIP, in this lab) to deliver its
+  forwarded request — DHCP relay is not a separate routing mechanism.
+• DHCP pool default-router value — must be the gateway address on the
+  same subnet as the clients that pool serves; a common mistake in
+  multi-pool DHCP servers is copying the same default-router value into
+  every pool, which breaks connectivity for any pool not on the DHCP
+  server's own directly connected subnet.
+• `ip ssh version 2` — explicitly forces SSH to use protocol version 2,
+  which fixes known cryptographic and design weaknesses present in SSH
+  version 1; combined with `login local`, `transport input ssh`, and a
+  generated RSA key pair, this is the complete standard checklist for
+  enabling secure remote CLI access on a Cisco device.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully layered five independent configurations onto one shared
+topology: RIPv2 across R1/R2/R3 for full reachability, syslog forwarding
+from all three routers to Server1, PAT on R1 and R2 for each LAN's
+Internet-bound (simulated) traffic, a two-pool DHCP server on R1 with
+R2 configured as a DHCP relay agent so both LANs can lease addresses,
+and SSH version 2 access on R1's vty lines verified with a successful
+login from PC1. This configuration is used, in modified/broken form, as
+the starting point for the next lab's troubleshooting exercise.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+DHCP relay agent (`ip helper-address`)
+  Converts a client's DHCP broadcast into a unicast request sent to a
+  specific, possibly remote, DHCP server address.
+  Exam: know it's configured on the interface facing the DHCP clients
+  (R2's LAN-facing G0/0 in this lab), not on the interface facing the
+  DHCP server — a very common exam trap swaps this.
+  Real world: this is exactly why a single central DHCP server (or a
+  small pair, for redundancy) can serve many remote branch-office
+  subnets without needing a DHCP server physically present on each one
+  — every branch router just needs one `ip helper-address` line.
+
+Multi-pool DHCP with mismatched default-router
+  Each DHCP pool's `default-router` must be the gateway actually on that
+  pool's subnet.
+  Exam: a subtle exam/lab trap is a DHCP pool that leases addresses fine
+  but clients still can't reach anything off-subnet — check whether
+  `default-router` in that specific pool points to a gateway that's
+  actually reachable from clients on that pool's network.
+  Real world: this exact symptom — DHCP "works" (client gets an IP) but
+  the client has no connectivity — is one of the most common DHCP
+  misconfiguration tickets, and the fix is almost always a
+  wrong/missing default-router or DNS-server value in that specific
+  pool.
+
+Combining RIP + NAT + DHCP + SSH on one device
+  None of these features conflict; they're independently configured and
+  simply coexist.
+  Exam: expect scenario questions that describe symptoms in one
+  technology (e.g. "SSH login fails") that are actually caused by a
+  problem in another (e.g. RIP not advertising the right network, so
+  the SSH client's return traffic never arrives) — this lab's own
+  sequel (a troubleshooting lab) is built around exactly that idea.
+  Real world: a real edge/branch router commonly runs all of these
+  simultaneously — routing, address translation, DHCP service or relay,
+  and secure remote management — so being comfortable reading a
+  `show running-config` that mixes all of them together, rather than
+  seeing each technology only in isolation, is a realistic and
+  necessary skill.
+
+==================================================
+END OF LAB
+==================================================

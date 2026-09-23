@@ -1,0 +1,462 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 054 - OSPF (Part 1: Single Area)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure single-area OSPF (area 0) across four routers to achieve full
+connectivity: set a loopback address on each router first so it
+becomes a predictable OSPF router ID, configure OSPF with different
+(locally-significant) process IDs per router, demonstrate how the
+`network` command's wildcard mask relates to what's actually
+advertised, suppress OSPF advertisements on loopback interfaces with
+`passive-interface`, then examine and deliberately manipulate OSPF's
+cost metric — first via the reference bandwidth, then via a
+per-interface cost override — to control which of two available paths
+R1 uses to reach R3.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                         +--------+
+                         |   R2   |   Router ID: 2.2.2.2
+                         +---+----+   (loopback0)
+                            /    \
+             F1/0 (Fast    /      \
+             Ethernet)    /        \
+                         /          \
+                  +-----+            +-----+
+                  |  R1  |            |  R3  |   Router ID: 3.3.3.3
+                  +-----+            +-----+   (loopback0)
+             Router ID:  \            /
+             1.1.1.1       \        /
+             (loopback0)     \      /
+                  G0/0 (Gigabit)\  /
+                         +--------+
+                         |   R4   |   Router ID: 4.4.4.4
+                         +--------+   (loopback0)
+
+R1 has two independent physical paths to reach R3: via R2 (starting on
+R1's F1/0, a Fast Ethernet interface) or via R4 (starting on R1's G0/0,
+a Gigabit Ethernet interface) — this diamond shape is deliberately used
+later in the lab to demonstrate OSPF cost/metric behavior. Every router
+also has a Loopback0 interface, used specifically to give each router a
+predictable, manually-controllable OSPF router ID. All four routers run
+OSPF in a single area (area 0).
+
+Note: the exact subnet addresses on the R1-R2 and R1-R4 links are
+approximated from the `network` command examples given in the video
+(which used broad demonstration wildcards like a /8 and a /16 on
+purpose, precisely to show that OSPF advertises the actual configured
+interface prefix rather than the wildcard's range) — the source
+captions did not clearly state exact octets, so specific subnet
+addresses are omitted here rather than guessed; verify against the live
+Packet Tracer file if exact addressing matters. The topology shape,
+interface types, loopback/router-ID addresses, and every command are
+accurately captured.
+
+==================================================
+STEP 1 - CONFIGURE A LOOPBACK ADDRESS ON EACH ROUTER (BEFORE OSPF)
+==================================================
+
+Configuring loopbacks BEFORE enabling OSPF matters: if a loopback is
+added after OSPF is already running, the router ID won't update to
+match it unless the OSPF process is reset — trivial in a lab, but not
+something you can casually do on a live production network.
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface Loopback0                 Creates a loopback interface (a virtual
+                                    interface, never physically down as long as
+                                    the router is up).
+ ip address 1.1.1.1 255.255.255.255  A /32 (host) mask — standard practice for a
+                                    router-ID loopback, since it represents the
+                                    router itself, not a subnet of hosts.
+exit                                 (No `no shutdown` needed — loopback
+                                    interfaces are up by default.)
+
+---------------- R2, R3, R4 (same pattern) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+R2: interface Loopback0
+ ip address 2.2.2.2 255.255.255.255
+R3: interface Loopback0
+ ip address 3.3.3.3 255.255.255.255
+R4: interface Loopback0
+ ip address 4.4.4.4 255.255.255.255
+
+Router ID selection rule (for reference): a manually-configured router
+ID always takes precedence; failing that, the highest-numbered loopback
+address becomes the router ID; failing that (no loopback at all), the
+highest-numbered address on any other interface is used instead. Using
+clean, memorable loopbacks like 1.1.1.1/2.2.2.2/3.3.3.3/4.4.4.4 makes
+router IDs predictable and easy to read in `show` output.
+
+==================================================
+STEP 2 - CONFIGURE OSPF AND ADVERTISE NETWORKS ON EACH ROUTER
+==================================================
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1                               Enables OSPF with process ID 1. The
+                                            process ID is LOCALLY significant only —
+                                            it does not need to match on neighboring
+                                            routers for them to become OSPF
+                                            neighbors (deliberately demonstrated in
+                                            this lab by using a different process ID
+                                            on every router). In almost all real
+                                            deployments, a router runs only a single
+                                            OSPF process, though multiple processes
+                                            (each with its own separate database)
+                                            are technically possible.
+network <F1/0 subnet> <wildcard> area 0     Advertises R1's F1/0-connected network.
+                                            The `network` command searches for any
+                                            interface whose address falls within the
+                                            stated range+wildcard, then advertises
+                                            THAT interface's actual configured
+                                            prefix — not necessarily the exact range
+                                            typed in the command. Demonstrated here
+                                            using a deliberately broad wildcard (an
+                                            /8-equivalent) even though F1/0 is
+                                            actually configured with a /24 mask —
+                                            OSPF still only advertises the real /24.
+network <G0/0 subnet> <wildcard> area 0     Same principle for G0/0, this time using
+                                            a /16-equivalent wildcard as another
+                                            demonstration — G0/0's actual configured
+                                            prefix is still what gets advertised.
+network 1.1.1.1 0.0.0.0 area 0              The loopback, this time with the exact
+                                            /32 mask matched precisely (wildcard
+                                            0.0.0.0 means "this exact address only").
+
+`area 0` is used for every network statement in this lab since it's
+entirely single-area OSPF.
+
+---------------- R2, R3, R4 (shortcut demonstrated) ----------------
+
+Rather than typing a separate `network` statement per interface, a
+single broad statement can activate OSPF on every interface at once —
+convenient for a lab, but generally avoided in real networks where
+precise control over which interfaces run OSPF matters.
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+R2: router ospf 2                           A different process ID again (2),
+ network 0.0.0.0 255.255.255.255 area 0      reinforcing that it's locally
+                                            significant. `0.0.0.0` with wildcard
+                                            `255.255.255.255` matches every possible
+                                            address, activating OSPF on every
+                                            interface on the router at once.
+R3: router ospf 3
+ network 0.0.0.0 255.255.255.255 area 0
+R4: router ospf 4
+ network 0.0.0.0 255.255.255.255 area 0
+
+==================================================
+STEP 3 - VERIFY NEIGHBORS AND LEARNED ROUTES
+==================================================
+
+---------------- R1 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor        Confirms R1 has formed OSPF neighbor relationships
+                             with both R2 and R4 — and that the neighbor IDs shown
+                             are exactly the loopback addresses configured in Step
+                             1 (2.2.2.2, 4.4.4.4), confirming the loopback-as-
+                             router-ID behavior worked. Neighbor relationships
+                             formed successfully despite every router using a
+                             different OSPF process ID, confirming process ID is
+                             only locally significant.
+show ip route                Shows R2, R3, and R4's loopback routes, plus the
+                             networks behind R2 and R4 that R1 isn't directly
+                             connected to — all marked with an "O" (learned via
+                             OSPF). Also confirms that R1 learned the ACTUAL
+                             configured prefix on R2/R3/R4's interfaces, not the
+                             broad `0.0.0.0/0.0.0.0`-style wildcard used in their
+                             `network` commands — there is no such broad network
+                             literally present in the routing table, only the real,
+                             specific subnets.
+
+==================================================
+STEP 4 - SUPPRESS OSPF ADVERTISEMENTS ON EVERY LOOPBACK
+==================================================
+
+Because OSPF was activated on the loopback interfaces too (directly on
+R1, and via the broad `0.0.0.0` statement on R2/R3/R4), each router is
+sending OSPF hello/advertisement traffic out its loopback — pointless,
+since a loopback never actually leads anywhere beyond the router
+itself.
+
+---------------- R1, R2, R3, R4 (same command on each) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+router ospf <process-id>
+ passive-interface Loopback0        Suppresses OSPF hello messages on the
+                                    loopback interface, while the loopback's own
+                                    network is still advertised to neighbors —
+                                    passive interfaces still get advertised, they
+                                    just don't send/receive OSPF hellos themselves.
+
+==================================================
+STEP 5 - ADJUST THE OSPF REFERENCE BANDWIDTH
+==================================================
+
+---------------- Diagnose the default behavior (R1) ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route            R1 has two equal-cost routes to R3's loopback — one via
+                         R2, one via R4 — both showing the same OSPF metric,
+                         despite the path via R4 including a faster Gigabit
+                         Ethernet link. This happens because OSPF calculates
+                         cost as (reference bandwidth ÷ interface bandwidth), and
+                         the default reference bandwidth is 100 Mbps: a Fast
+                         Ethernet interface (100 Mbps) computes to cost 1
+                         (100÷100), while a Gigabit Ethernet interface (1000
+                         Mbps) computes to 100÷1000 = 0.1 — but OSPF's lowest
+                         possible cost is 1, so the fractional result is rounded
+                         up to 1 as well. This means Fast Ethernet, Gigabit
+                         Ethernet, 10 Gigabit, and even 100 Gigabit interfaces
+                         ALL compute to the same minimum cost of 1 under the
+                         default reference bandwidth — effectively making OSPF
+                         blind to any bandwidth difference above 100 Mbps.
+
+---------------- Fix (R1, R2, R3, R4 — same command on each) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf <process-id>
+ auto-cost reference-bandwidth 10000         Raises the reference bandwidth to
+                                            10,000 Mbps (10 Gbps), per the lab's
+                                            instruction that a 10 Gigabit interface
+                                            should compute to a cost of exactly 1.
+                                            This must be configured identically
+                                            (10000) on EVERY router — IOS itself
+                                            warns that the reference bandwidth
+                                            should be consistent across all OSPF
+                                            routers in the network, since an
+                                            inconsistent value would make different
+                                            routers disagree on path cost for the
+                                            exact same link.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            Now only ONE route to R3's loopback remains — via R4's
+                         Gigabit Ethernet interface — since OSPF now correctly
+                         distinguishes Gigabit Ethernet's cost from Fast
+                         Ethernet's, and the Gigabit path wins outright.
+
+==================================================
+STEP 6 - MANUALLY OVERRIDE OSPF COST ON A SPECIFIC INTERFACE
+==================================================
+
+Not something you'd typically do on a real network, but demonstrated
+here to show it's possible: forcing R1 to prefer the (objectively
+slower) path via R2 instead, by manually raising the cost of the R1-R4
+Gigabit Ethernet link specifically.
+
+---------------- R1 ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ip ospf cost 10000                  Manually sets this interface's OSPF cost to
+                                    10000, overriding whatever value
+                                    auto-cost reference-bandwidth would otherwise
+                                    calculate for it — making this link
+                                    deliberately far more "expensive" than the
+                                    Fast Ethernet path via R2.
+
+---------------- R4 (matching change on the other end of the same link) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ ip ospf cost 10000                  Applying the cost change on both ends of the
+                                    link ensures OSPF's cost calculation is
+                                    consistent in both directions across it.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            The route to R3's loopback has switched back — now
+                         exclusively via R2 — even though the path via R4 is
+                         still objectively faster, purely because the manually
+                         configured interface cost makes OSPF calculate it as
+                         more expensive.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor                            Lists OSPF neighbors, their
+                                                  router IDs, and adjacency state.
+show ip route                                    Shows the routing table,
+                                                  including OSPF-learned routes
+                                                  (marked "O") and their metric.
+show ip protocols                                 Confirms OSPF process ID,
+                                                  router ID, and configured
+                                                  networks/areas.
+show ip ospf interface <interface>                Shows a specific interface's
+                                                  OSPF cost, area, and neighbor
+                                                  state.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured a /32 loopback address on all four routers before enabling
+  OSPF, so each router's loopback became its predictable OSPF router ID
+  (1.1.1.1, 2.2.2.2, 3.3.3.3, 4.4.4.4).
+✓ Enabled OSPF with a deliberately different process ID on every
+  router, and advertised networks using `network` commands with
+  varying wildcard breadths on R1 (demonstrating OSPF advertises the
+  interface's actual configured prefix, not the wildcard's range) and a
+  single catch-all `network 0.0.0.0 255.255.255.255` shortcut on
+  R2/R3/R4.
+✓ Verified full OSPF neighbor adjacency and route learning across all
+  four routers despite the differing process IDs.
+✓ Suppressed unnecessary OSPF hello traffic on every router's loopback
+  with `passive-interface Loopback0`.
+✓ Diagnosed OSPF's default cost behavior (Fast Ethernet and Gigabit
+  Ethernet both computing to the minimum cost of 1 under the default
+  100 Mbps reference bandwidth), then raised
+  `auto-cost reference-bandwidth` to 10000 on all four routers so OSPF
+  correctly preferred the faster Gigabit path.
+✓ Manually overrode the OSPF cost on R1's and R4's Gigabit interface
+  (`ip ospf cost 10000`) to deliberately force R1 back onto the slower
+  Fast Ethernet path via R2, demonstrating per-interface cost control.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• OSPF router ID — a 32-bit value routers use to identify themselves to
+  OSPF neighbors, determined by (in order of precedence): a manually
+  configured router ID, the highest-addressed loopback interface, or
+  the highest-addressed physical interface if no loopback exists.
+  Configuring loopbacks BEFORE enabling OSPF avoids needing to reset
+  the OSPF process to pick up a router ID change afterward.
+• OSPF process ID — the number after `router ospf <id>`; purely locally
+  significant, meaning it can differ between neighboring routers
+  without preventing them from forming an adjacency (unlike, say, an
+  EIGRP autonomous system number, which must match).
+• The `network` command's actual behavior — it searches for interfaces
+  whose address falls within the given network+wildcard range, then
+  advertises each matching interface's OWN actual configured prefix —
+  not the range typed in the command itself. This means a deliberately
+  broad wildcard (even covering the whole address space) can be used as
+  a shortcut without over-advertising anything incorrect.
+• `passive-interface` — suppresses OSPF hello/advertisement traffic on
+  a specific interface while still advertising that interface's network
+  to neighbors; standard practice for loopbacks and any interface that
+  doesn't actually lead to another OSPF-speaking device (e.g. a
+  LAN-facing interface with no other routers on it).
+• OSPF cost/metric calculation — cost = reference bandwidth ÷ interface
+  bandwidth, with a minimum possible cost of 1 (fractional results
+  round up to 1, never below). The default reference bandwidth (100
+  Mbps) makes every interface ≥100 Mbps compute to the same minimum
+  cost, effectively hiding bandwidth differences above that ceiling.
+• `auto-cost reference-bandwidth <mbps>` — globally raises the
+  reference bandwidth used in OSPF's cost calculation, restoring OSPF's
+  ability to distinguish between higher-speed interfaces; must be
+  configured identically across every OSPF router in the network to
+  avoid inconsistent cost calculations for the same physical link.
+• `ip ospf cost <value>` — manually overrides the OSPF cost of a
+  specific interface, taking precedence over whatever
+  auto-cost reference-bandwidth would otherwise calculate; a direct way
+  to engineer which path OSPF prefers, independent of actual link speed.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured single-area (area 0) OSPF across four routers,
+using loopback addresses to produce clean, predictable router IDs and
+demonstrating that both OSPF process IDs and `network` command wildcard
+breadth don't affect what's actually advertised or which neighbors
+form. Diagnosed OSPF's default cost blindness above 100 Mbps (Fast
+Ethernet and Gigabit Ethernet both computing to cost 1), fixed it with
+a consistent `auto-cost reference-bandwidth 10000` across all routers
+(after which R1 correctly preferred the faster Gigabit path to R3 via
+R4), and then demonstrated manual per-interface cost override
+(`ip ospf cost 10000`) forcing R1 back onto the slower Fast Ethernet
+path via R2 instead — despite it no longer being the objectively faster
+route.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Loopback-derived router ID, configured before OSPF
+  Loopbacks aren't required for OSPF to function, but give predictable,
+  administrator-chosen router IDs instead of an arbitrary highest
+  physical interface address.
+  Exam: know the exact router ID precedence order (manual > highest
+  loopback > highest physical interface) and that a loopback added
+  AFTER OSPF is running won't update the router ID without a process
+  reset (`clear ip ospf process`) — a commonly tested gotcha.
+  Real world: real networks universally use loopback-derived router IDs
+  (often matching a management/monitoring address scheme) specifically
+  for this predictability — arbitrary physical-interface-derived router
+  IDs make troubleshooting and documentation much harder.
+
+OSPF process ID is only locally significant
+  Unlike some other routing protocols' process/AS numbers, OSPF process
+  IDs never need to match between neighbors.
+  Exam: a frequent trap answer choice suggests OSPF neighbors failed to
+  form because of "mismatched process IDs" — that's never actually the
+  cause; check area number, subnet/mask mismatch, hello/dead timers, or
+  authentication instead.
+  Real world: this locally-significant behavior is why different
+  departments/teams in a large organization can each pick their own
+  OSPF process ID on their own routers without needing to coordinate a
+  single number across the whole company.
+
+Reference bandwidth blindness above 100 Mbps
+  Every interface 100 Mbps or faster computes to the same minimum OSPF
+  cost of 1 under the unmodified default.
+  Exam: memorize the cost formula (reference bandwidth ÷ interface
+  bandwidth, minimum 1) and that the default reference bandwidth is 100
+  Mbps — a very frequently tested number, along with the consequence
+  that Fast Ethernet and Gigabit links are otherwise indistinguishable
+  to OSPF.
+  Real world: any modern network with even one Gigabit-or-faster link
+  should raise `auto-cost reference-bandwidth` — leaving it at default
+  is a genuine, common real-world misconfiguration that causes OSPF to
+  ignore real bandwidth differences when choosing paths, exactly as
+  demonstrated in this lab before the fix.
+
+Manual `ip ospf cost` overriding calculated cost
+  A deliberate override always wins over whatever the reference-
+  bandwidth formula would calculate.
+  Exam: know this command exists specifically to engineer path
+  selection independent of actual bandwidth — useful for exam questions
+  asking "how would you force traffic onto path X."
+  Real world: legitimately used to prefer a specific path for policy
+  reasons (e.g. cost, provider SLA, or keeping a backup link mostly
+  idle) even when it isn't the fastest one — exactly the scenario this
+  lab's final step demonstrates, deliberately choosing the "wrong"
+  (slower) path on purpose.
+
+==================================================
+END OF LAB
+==================================================

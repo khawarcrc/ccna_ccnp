@@ -1,0 +1,330 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 064 - PPPoE
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure PPPoE (Point-to-Point Protocol over Ethernet), which
+encapsulates PPP — previously used only over serial interfaces in this
+series — into Ethernet frames instead, exactly as a real residential/
+business Internet connection (DSL or fiber, commonly) does. Configure
+R1 for PPPoE with PAP authentication toward SPR1, and R2 for PPPoE with
+CHAP authentication toward SPR2, both over Ethernet links this time
+instead of serial.
+
+Note: like Lab 063 (MultiLink PPP), this lab uses **GNS3, not Packet
+Tracer**, since Packet Tracer doesn't support PPPoE. The service
+provider routers (SPR1, SPR2) are pre-configured before this lab
+begins; only R1 and R2's client-side configuration is done here.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+   G0/0 <-> G0/0   +---------+
+  |   R1   |-------------------|  SPR1   |   PPPoE + PAP
+  +--------+                   +---------+
+  Dialer1: negotiated           SPR1: 10.0.0.1
+  (received 10.0.0.2)
+  bound to Virtual-Access1
+
+  +--------+   G0/0 <-> G0/0   +---------+
+  |   R2   |-------------------|  SPR2   |   PPPoE + CHAP
+  +--------+                   +---------+
+  Dialer1: negotiated           SPR2: 20.0.0.1
+  (received 20.0.0.2)
+  bound to Virtual-Access1
+
+R1 and R2 each connect to their own service provider router over a
+plain Ethernet link (G0/0), rather than a serial link — PPPoE's whole
+purpose is running PPP over exactly this kind of Ethernet connection.
+Neither R1's nor R2's physical G0/0 interface carries an IP address
+directly; instead, each router uses a logical Dialer1 interface (PPP
+encapsulation, negotiated IP address) bound to G0/0 via a dialer pool,
+mirroring how a real home/business router's PPPoE WAN connection is
+configured. R1-SPR1 uses PAP authentication; R2-SPR2 uses CHAP — the
+same two methods from Lab 061 (PPP) and Lab 063 (MLPPP), now applied
+over PPPoE.
+
+==================================================
+STEP 1 - CONFIGURE PPPoE WITH PAP (R1 <-> SPR1)
+==================================================
+
+SPR1 is pre-configured to authenticate using hostname "packet" and
+password "tracer" — so R1 needs a matching local username/password
+entry to verify what SPR1 sends, exactly as with plain PPP+PAP.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username packet password tracer              Local entry verifying what SPR1
+                                            sends — same PAP concept as Lab 061.
+interface Dialer1                             Creates the logical dialer
+                                            interface — PPPoE's equivalent of
+                                            the physical serial interface in
+                                            plain PPP; this is later bound to
+                                            the real Ethernet interface.
+ mtu 1492                                     Lowers the MTU from Ethernet's
+                                            standard 1500 down to 1492 — PPPoE
+                                            adds an extra 8-byte header, so the
+                                            usable payload size must shrink to
+                                            compensate and avoid fragmentation.
+ encapsulation ppp                            Sets PPP encapsulation on the
+                                            dialer interface, same as any PPP
+                                            link.
+ ip address negotiated                        R1 will NOT be manually assigned
+                                            an IP address — instead, it
+                                            negotiates one dynamically with SPR1
+                                            as part of establishing the PPPoE
+                                            session (exactly like a real ISP
+                                            handing out a dynamic WAN address).
+ ppp authentication pap                       Enables PAP authentication.
+ ppp pap sent-username Cisco password CCNA     Per this lab's topology diagram,
+                                            configures what R1 sends to SPR1.
+ dialer pool 1                                Assigns this dialer interface to
+                                            dialer pool 1 — used next to link it
+                                            to the actual physical interface.
+show run interface Dialer1                    Confirms all the above: MTU 1492,
+                                            `ip address negotiated`,
+                                            `encapsulation ppp`, `dialer pool
+                                            1`, and the PAP authentication
+                                            lines.
+
+---------------- R1 — bind the dialer interface to the physical Ethernet interface ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/0
+ pppoe client dial-pool-number 1              A single command links this
+                                            physical Ethernet interface to
+                                            dialer pool 1 — the actual PPPoE
+                                            session runs over this physical
+                                            interface, using the logical
+                                            settings defined on Dialer1.
+ no shutdown
+
+---------------- Verify (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief      Shows Dialer1 received the address 10.0.0.2 from
+                             SPR1 — and also shows a NEW interface,
+                             Virtual-Access1, that R1 never explicitly
+                             configured. It's automatically created: the Dialer
+                             interface provides Layer 3 information (the IP
+                             address/routing), while the automatically-created
+                             Virtual-Access interface handles the Layer 2 PPP
+                             session details underneath it — the exact internal
+                             mechanics aren't something this lab expects you to
+                             master, only that it's expected/normal to see it
+                             appear.
+ping 10.0.0.1                 Succeeds.
+
+==================================================
+STEP 2 - CONFIGURE PPPoE WITH CHAP (R2 <-> SPR2)
+==================================================
+
+Same overall structure as R1, using CHAP instead of PAP — the username
+must be SPR2's own hostname, with a matching password on both ends.
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username SPR2 password CCNA                  Local username matching the far
+                                            router's hostname (SPR2) — same
+                                            CHAP requirement as Lab 061/063.
+interface Dialer1
+ mtu 1492
+ encapsulation ppp
+ ip address negotiated
+ ppp authentication chap                      CHAP instead of PAP — again, no
+                                            separate "sent-username" command
+                                            needed.
+ dialer pool 1
+
+interface GigabitEthernet0/0
+ pppoe client dial-pool-number 1
+ no shutdown
+
+---------------- Verify (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief      Dialer1 received the address 20.0.0.2 from SPR2,
+                             and Virtual-Access1 was again automatically
+                             created.
+show interface Dialer1        Explicitly shows "bound to" Virtual-Access1 —
+                             confirming the Layer 3 (Dialer1) / Layer 2
+                             (Virtual-Access1) relationship directly in the
+                             command output.
+ping 20.0.0.1                 Succeeds.
+
+==================================================
+STEP 3 - CONFIGURE STATIC DEFAULT ROUTES AND VERIFY END-TO-END REACHABILITY
+==================================================
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 20.0.0.1            Static default route pointing to
+                                            SPR2.
+show ip route                                Confirms the default route.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 10.0.0.1            Static default route pointing to
+                                            SPR1.
+show ip route                                Confirms the default route.
+ping 20.0.0.2 (R2's Dialer1 address)          Succeeds — full end-to-end
+                                            reachability across both PPPoE
+                                            sessions and the service provider
+                                            network in between.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief                          Confirms the negotiated IP
+                                                  address on the Dialer
+                                                  interface, and shows the
+                                                  auto-created Virtual-Access
+                                                  interface.
+show interface Dialer1                            Shows the dialer interface's
+                                                  status, including which
+                                                  Virtual-Access interface it's
+                                                  bound to.
+show running-config                               Verify the dialer interface's
+                                                  MTU, encapsulation, negotiated
+                                                  address, dialer pool, and PPP
+                                                  authentication settings, plus
+                                                  the physical interface's
+                                                  `pppoe client
+                                                  dial-pool-number` command.
+show ip route                                    Confirms static default
+                                                  routes.
+ping <ip>                                          Verify reachability.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured R1's Dialer1 interface for PPPoE with PAP: MTU 1492,
+  `encapsulation ppp`, `ip address negotiated`, PAP authentication
+  (local username matching SPR1's identity, plus `ppp pap
+  sent-username` for what R1 sends), and `dialer pool 1`; bound it to
+  the physical G0/0 with `pppoe client dial-pool-number 1`; verified a
+  successful PPPoE session (negotiated address 10.0.0.2, automatically
+  created Virtual-Access1) and a successful ping to SPR1.
+✓ Repeated the same structure on R2 using CHAP instead of PAP (local
+  username matching SPR2's hostname), verified a negotiated address of
+  20.0.0.2 and a successful ping to SPR2.
+✓ Configured static default routes on both R1 and R2 and confirmed
+  full end-to-end reachability between them across their respective
+  PPPoE sessions.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• PPPoE (Point-to-Point Protocol over Ethernet) — encapsulates PPP
+  (with all its usual features: authentication, etc.) inside Ethernet
+  frames, allowing PPP to run over an Ethernet connection instead of a
+  dedicated serial link — the standard mechanism behind most real-world
+  DSL and many fiber Internet connections.
+• Dialer interface — a logical interface used to configure PPPoE's
+  Layer 3/PPP settings (MTU, encapsulation, IP addressing, PPP
+  authentication), analogous to how MLPPP used a logical Multilink
+  interface — the actual physical interface (G0/0 here) is only bound
+  to it afterward, and carries no IP address of its own.
+• MTU 1492 — PPPoE's required MTU adjustment, lowered from Ethernet's
+  standard 1500 to make room for PPPoE's additional 8-byte header
+  without exceeding the underlying Ethernet frame's actual size limit.
+• `ip address negotiated` — configures a dialer (or other PPP)
+  interface to dynamically negotiate its IP address with the far end
+  during PPP/PPPoE session establishment, rather than using a fixed,
+  manually-configured address — exactly how a typical residential ISP
+  connection obtains its public IP.
+• `dialer pool <n>` / `pppoe client dial-pool-number <n>` — the pairing
+  that links a logical Dialer interface's configuration to a specific
+  physical interface: the dialer interface joins a dialer pool number,
+  and the physical interface is told which dialer pool to source its
+  PPPoE client configuration from.
+• Virtual-Access interface — automatically created by IOS once a PPPoE
+  (or other dialer-based) session is established; the Dialer interface
+  represents the Layer 3 (addressing/routing) side, while the
+  auto-created Virtual-Access interface handles the underlying Layer 2
+  PPP session — visible in `show interface Dialer1`'s "bound to" line.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured PPPoE on R1 (PAP authentication toward SPR1,
+Dialer1 negotiating address 10.0.0.2, bound to G0/0 via dialer pool 1)
+and R2 (CHAP authentication toward SPR2, Dialer1 negotiating address
+20.0.0.2, same binding pattern), verifying each session via `show ip
+interface brief`/`show interface Dialer1` (including the
+automatically-created Virtual-Access1 interface) and a successful ping
+to each service provider. Configured static default routes on both
+routers and confirmed full end-to-end reachability between R1 and R2
+across their respective PPPoE sessions.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+PPPoE's dialer interface model
+  Configuration lives on a logical Dialer interface, bound afterward to
+  a physical Ethernet interface — structurally similar to MLPPP's
+  logical Multilink interface, but for a different underlying purpose
+  (Ethernet encapsulation vs. link bundling).
+  Exam: know the specific command pairing —
+  `dialer pool <n>` (on the Dialer interface) and
+  `pppoe client dial-pool-number <n>` (on the physical interface) — and
+  that they must reference the same pool number to bind correctly.
+  Real world: this dialer-interface model is exactly what's configured
+  on any router or firewall doing its own PPPoE termination for an
+  Internet connection (rather than relying on a separate modem/ONT
+  doing PPPoE itself) — a genuinely common real-world router
+  configuration task, not just an exam topic.
+
+MTU 1492 for PPPoE
+  A specific, memorizable number reflecting PPPoE's 8-byte overhead.
+  Exam: memorize 1492 specifically (1500 - 8) as PPPoE's standard MTU
+  — a frequently tested exact value.
+  Real world: an MTU mismatch on a PPPoE link is a classic, very
+  common real-world cause of "some things work, but large
+  transfers/pages fail or hang" — many protocols/paths tolerate small
+  packets fine but silently break on anything requiring fragmentation
+  that a misconfigured MTU prevents from happening cleanly.
+
+`ip address negotiated`
+  The IP address isn't statically configured — it's obtained
+  dynamically as part of the PPPoE session.
+  Exam: recognize this command as PPPoE's (and PPP's generally)
+  equivalent of DHCP-style dynamic addressing — don't expect a static
+  `ip address` line on a PPPoE client's dialer interface.
+  Real world: this is exactly how virtually every consumer PPPoE-based
+  Internet connection obtains its public IP address — the ISP assigns
+  it dynamically (or sometimes via a fixed assignment tied to
+  authentication credentials) during each PPPoE session establishment,
+  never hardcoded on the customer's router.
+
+==================================================
+END OF LAB
+==================================================

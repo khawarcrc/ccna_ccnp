@@ -1,0 +1,317 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 061 - PPP with PAP and CHAP Authentication
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure PPP (Point-to-Point Protocol) — a Layer 2 WAN encapsulation
+offering authentication, unlike the Cisco-proprietary HDLC default —
+on two separate serial links, each using a different authentication
+method. Configure PPP with PAP (Password Authentication Protocol,
+using a static password) between R1 and SPR1 (Service Provider Router
+1), and PPP with CHAP (Challenge Handshake Authentication Protocol,
+using a dynamic, randomly-generated challenge string) between R2 and
+SPR2.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R1   |----------------------|  SPR1   |   PPP + PAP authentication
+  +--------+   10.0.0.2  10.0.0.1 +---------+
+
+  +--------+   S0/0        S0/0   +---------+
+  |   R2   |----------------------|  SPR2   |   PPP + CHAP authentication
+  +--------+   20.0.0.2  20.0.0.1 +---------+
+
+R1 and R2 are two independent enterprise routers, each connected via
+its own separate serial WAN link to its own service provider router
+(SPR1 and SPR2 respectively) — these are two unrelated point-to-point
+links in this lab, not part of one larger shared topology. Both SPR1
+and SPR2 were already pre-configured before this lab begins (SPR1 for
+PAP, SPR2 for CHAP) — only R1 and R2's sides are configured on-screen.
+Static default routes toward the service provider side were also
+pre-configured on both R1 and R2, used at the end of the lab to confirm
+reachability across the WAN link, not configured as part of this lab's
+own steps.
+
+Note: exact IP addressing on both serial links is not stated with full
+clarity in the source captions — reconstructed here as clean
+illustrative /24-style addresses (10.0.0.0/24 and 20.0.0.0/24)
+consistent with the digits audible in the ping tests; verify against
+the live Packet Tracer file if exact precision matters. The
+authentication commands, usernames, and passwords below are all stated
+explicitly and clearly in the source.
+
+==================================================
+STEP 1 - PPP WITH PAP (R1 <-> SPR1)
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Shows the interface is using the default Cisco HDLC
+                             encapsulation, and is in an "up/down" state (Layer 1
+                             up, Layer 2 not fully up) — because SPR1's side is
+                             already configured for PPP, an encapsulation mismatch
+                             exists.
+ping 10.0.0.1                 Fails, consistent with the encapsulation mismatch.
+
+---------------- Configure PPP encapsulation (R1) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface Serial0/0
+ encapsulation ppp                   Switches from the default HDLC to PPP
+                                    encapsulation, matching SPR1's side.
+show ip interface brief              The interface is STILL up/down — expected,
+                                    since PAP authentication hasn't been
+                                    configured yet on R1, even though SPR1 is
+                                    already expecting it.
+
+---------------- Configure PAP authentication (R1) ----------------
+
+SPR1 is pre-configured with a local username of "Cisco" / password
+"CCNA" — this is what SPR1 expects R1 to SEND it to authenticate.
+Separately, SPR1 itself is configured to send back a username of
+"packet" / password "tracer" to R1 — so R1 needs a matching local user
+entry to verify what SPR1 sends.
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+exit
+username packet password tracer                      Creates a local username/
+                                                    password entry on R1,
+                                                    matching what SPR1 will send
+                                                    during authentication — used
+                                                    to verify SPR1's identity.
+interface Serial0/0
+ ppp authentication pap                              Enables PAP authentication
+                                                    on this interface.
+ ppp pap sent-username Cisco password CCNA            Configures what R1 itself
+                                                    sends to SPR1 to
+                                                    authenticate — the username/
+                                                    password SPR1 is already
+                                                    configured to expect.
+ shutdown
+ no shutdown                                         Resets the interface to
+                                                    speed up reconvergence
+                                                    rather than waiting for PPP
+                                                    to renegotiate on its own.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief   The interface is now up/up.
+ping 10.0.0.1              Succeeds.
+
+**PAP summary (as stated in the lab):** configure a local username/
+password matching what the far end will send; set `encapsulation ppp`
+on the interface; enable `ppp authentication pap`; then configure what
+YOUR router sends with `ppp pap sent-username <user> password
+<password>` — the far end must have that exact username/password
+configured to accept it.
+
+==================================================
+STEP 2 - PPP WITH CHAP (R2 <-> SPR2)
+==================================================
+
+CHAP is more secure than PAP because it authenticates using a dynamic,
+randomly-generated challenge string for each authentication attempt,
+rather than a static, unchanging password sent as-is — though a
+username/password still has to be configured, since it's used to
+generate that challenge/response.
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interfaces Serial0/0    Same starting symptom as R1 — default HDLC
+                             encapsulation, up/down state, since SPR2 is already
+                             configured for PPP with CHAP.
+ping 20.0.0.1                  Fails, as expected.
+
+---------------- Configure CHAP authentication (R2) ----------------
+
+For CHAP, the required username is NOT an arbitrary choice — it must
+be the OTHER router's hostname. Since the far end here is SPR2, the
+username configured on R2 must be "SPR2." The password (CCNA, per this
+lab's instructions) must match exactly on both routers. (On the
+service-provider side, a matching `username R2 password CCNA` was
+already pre-configured — the video notes that configuring the far/
+service-provider end is out of scope for the CCNA Routing & Switching
+track specifically.)
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+username SPR2 password CCNA             Creates the local username/password entry
+                                        — the username must match the far
+                                        router's actual hostname (SPR2), not an
+                                        arbitrary name like with PAP.
+interface Serial0/0
+ shutdown                                Shuts the interface down while
+                                        configuring, same as on R1.
+ encapsulation ppp
+ ppp authentication chap                 Enables CHAP authentication — notably,
+                                        there is no separate "sent-username"
+                                        style command needed for CHAP the way
+                                        PAP required one; the username/password
+                                        configured above is enough.
+ no shutdown
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip interface brief   The interface is now up/up.
+ping 20.0.0.1              Succeeds.
+ping 10.0.0.2               Also succeeds — pinging R1 all the way across the
+                           service provider's network, using the pre-configured
+                           static default routes on both R1 and R2 (the kind of
+                           setup common in a real enterprise WAN connection to an
+                           ISP).
+
+**CHAP summary (as stated in the lab):** configure a local username
+matching the FAR router's hostname, with a password matching on both
+sides; set `encapsulation ppp`; then enable `ppp authentication chap`.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show interfaces <interface>                       Shows encapsulation type and
+                                                  Layer 1/2 (up/up, up/down,
+                                                  etc.) status.
+show ip interface brief                           Quick summary of interface
+                                                  up/down state.
+show running-config                               Verify username entries,
+                                                  encapsulation, and PPP
+                                                  authentication commands.
+ping <ip>                                          Verify reachability across
+                                                  the WAN link (and, once
+                                                  routing is in place, beyond
+                                                  it).
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Diagnosed an encapsulation mismatch (default HDLC vs. the far end's
+  pre-configured PPP) on both R1's and R2's serial interfaces, visible
+  as an "up/down" Layer 2 state.
+✓ Configured R1 with PPP encapsulation and PAP authentication: a local
+  username/password matching what SPR1 sends (`packet`/`tracer`), and
+  `ppp pap sent-username` configuring what R1 itself sends to SPR1
+  (`Cisco`/`CCNA`) — verified with a successful ping to SPR1.
+✓ Configured R2 with PPP encapsulation and CHAP authentication: a local
+  username matching SPR2's own hostname (`SPR2`) with a shared password
+  (`CCNA`) — verified with a successful ping to SPR2, and then a
+  successful ping all the way to R1 across the service provider network
+  using pre-configured static default routes.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• PPP (Point-to-Point Protocol) — a Layer 2 WAN encapsulation
+  (`encapsulation ppp`) commonly used on serial links, offering
+  authentication capability that the default Cisco HDLC encapsulation
+  lacks entirely.
+• Encapsulation mismatch symptom — a serial interface stuck in
+  "up/down" (rather than fully "up/up" or fully "down/down") is the
+  classic symptom of Layer 1 being fine but Layer 2 encapsulation not
+  matching between the two ends of a link.
+• PAP (Password Authentication Protocol) — authenticates using a
+  static, unchanging username/password sent between routers;
+  configured with `ppp authentication pap` plus `ppp pap sent-username
+  <user> password <pass>` (what THIS router sends) and a matching local
+  `username`/`password` entry (used to verify what the FAR router
+  sends) — less secure than CHAP since the credentials never change.
+• CHAP (Challenge Handshake Authentication Protocol) — authenticates
+  using a dynamic, randomly-generated challenge string for each
+  authentication attempt (rather than sending a static password
+  directly), making it more secure than PAP; configured with `ppp
+  authentication chap` plus a local `username <far-end-hostname>
+  password <shared-password>` entry — critically, the username
+  configured must be the OTHER router's actual hostname, and the
+  password must match exactly on both ends.
+• PAP vs. CHAP username requirement — PAP's "sent" username can be
+  anything, as long as it matches what the far end expects; CHAP's
+  local username specifically must equal the other router's hostname —
+  an important, easy-to-mix-up distinction between the two methods.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured PPP with PAP authentication on R1's link to
+SPR1 (local username `packet`/`tracer` matching what SPR1 sends, `ppp
+pap sent-username Cisco password CCNA` for what R1 sends), and PPP with
+CHAP authentication on R2's link to SPR2 (local username `SPR2`
+matching the far router's hostname, password `CCNA` matching on both
+sides). Both links came up successfully (verified via `show ip
+interface brief` and a successful ping to each service provider
+router), and R2 was additionally confirmed able to reach R1 across the
+full service-provider path using pre-configured static default routes.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+PAP vs. CHAP security and configuration differences
+  PAP sends a static, reusable password; CHAP never sends the password
+  itself, only a hash-based response to a changing challenge.
+  Exam: memorize the exact command differences — PAP needs `ppp pap
+  sent-username <user> password <pass>` in addition to a local
+  username/password entry, while CHAP needs ONLY a local `username
+  <hostname> password <pass>` entry (no separate "sent" command) —
+  along with the specific rule that CHAP's username must match the far
+  router's actual hostname.
+  Real world: CHAP is strongly preferred in real deployments over PAP
+  specifically because PAP's static password is vulnerable to replay
+  and eavesdropping on the link — CHAP's per-session dynamic challenge
+  meaningfully raises the bar even over an insecure medium.
+
+"Up/down" interface state as a Layer 2 mismatch signature
+  A specific, recognizable status distinct from "administratively
+  down" or fully "down/down."
+  Exam: know how to read `show interfaces`/`show ip interface brief`
+  status pairs — up/up (fully working), administratively down/down
+  (manually shut down), down/down (Layer 1 problem, e.g. no cable or
+  far end down), and up/down (Layer 1 fine, Layer 2 problem — classic
+  encapsulation or authentication mismatch, exactly this lab's starting
+  symptom).
+  Real world: this status-pair reading is one of the very first things
+  checked on any "this WAN link isn't working" ticket — it immediately
+  narrows whether to investigate cabling/physical layer or
+  encapsulation/authentication configuration.
+
+CHAP username must be the far router's hostname
+  Not an arbitrary credential like PAP's — a specific, structural
+  requirement.
+  Exam: a common trap is configuring a CHAP username that seems
+  "logical" (like a service name) rather than the actual required
+  value — the far router's hostname, exactly as configured with
+  `hostname <name>` on that device.
+  Real world: this is precisely why CHAP configuration errors are often
+  simple typos in the username (mismatching the actual configured
+  hostname of the peer) — always confirm the peer's real hostname via
+  `show run` on that device, or ask whoever manages the far end, rather
+  than guessing.
+
+==================================================
+END OF LAB
+==================================================

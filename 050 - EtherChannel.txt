@@ -1,0 +1,396 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 050 - EtherChannel
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+First analyze a four-switch topology with redundant parallel links from
+a spanning tree perspective — confirming only one link between each
+switch pair actually forwards traffic while the rest sit blocked, pure
+STP redundancy with no load-sharing. Then configure three different
+EtherChannels to bundle those redundant links into single logical
+interfaces so every physical link can be used simultaneously: a Layer 2
+EtherChannel using PAgP (Cisco proprietary), a static Layer 3
+EtherChannel, and a Layer 2 EtherChannel using LACP (the IEEE standard).
+
+==================================================
+TOPOLOGY
+==================================================
+
+   +--------+   F0/1<->F0/4   +--------+   G0/1<->G0/1   +--------+   F0/1<->F0/4   +--------+
+   |  SW1   |======(x4)======|  SW2   |======(x2)=======|  SW3   |======(x4)======|  SW4   |
+   +--------+   F0/2<->F0/3   +--------+   G0/2<->G0/2   +--------+   F0/2<->F0/3   +--------+
+   ROOT BRIDGE  F0/3<->F0/2                                          F0/3<->F0/2
+   (all ports   F0/4<->F0/1                                          F0/4<->F0/1
+    designated)
+
+   Po1 (SW1) <-> Po2 (SW2)                    Po1 (SW2) <-> Po1 (SW3)                    Po2 (SW3) <-> Po1 (SW4)
+   Layer 2 EtherChannel, PAgP                 Layer 3 EtherChannel, static ("on")        Layer 2 EtherChannel, LACP
+   Trunk, bundles F0/1-F0/4                   23.0.0.1/24 <-> 23.0.0.2/24,               Trunk, bundles F0/1-F0/4
+                                              bundles G0/1-G0/2
+
+SW1-SW2 and SW3-SW4 are each connected by four parallel Fast Ethernet
+links, deliberately cross-wired (F0/1 on one switch to F0/4 on the
+other, F0/2 to F0/3, etc.) rather than straight across, specifically to
+demonstrate that STP's root-port selection depends on the NEIGHBOR's
+port ID, not the local switch's own port number. SW2-SW3 is connected
+by two parallel Gigabit links (G0/1-G0/1, G0/2-G0/2, not cross-wired).
+Before any EtherChannel configuration, SW1 is the root bridge (STP
+elects it by default — its priority/MAC combination is lowest), and
+only one link in each redundant set actively forwards traffic per
+standard STP behavior; the rest sit blocked as pure standby redundancy.
+
+==================================================
+STEP 1 - ANALYZE THE PRE-ETHERCHANNEL SPANNING TREE STATE
+==================================================
+
+---------------- SW1 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show spanning-tree       Confirms SW1 is the root bridge ("This bridge is the
+                         root") — every port on SW1 is therefore a designated
+                         (forwarding) port, visually confirmed in Packet Tracer
+                         by every port light on SW1 being green.
+
+Root port selection on the other three switches: when the route cost
+AND the neighboring switch's bridge ID are tied (as they are here, since
+each pair of parallel links connects the exact same two switches), the
+deciding factor is the NEIGHBOR's port ID (port priority, default 128,
+plus port number — lower wins).
+
+- **SW2**: from SW2's perspective, SW1's F0/1 has the lowest port ID of
+  the four parallel links. Because of the cross-wiring, SW1's F0/1
+  connects to SW2's own F0/4 — so **SW2's F0/4 becomes its root port**.
+- **SW4**: by the identical cross-wired pattern against SW3, **SW4's
+  F0/4 becomes its root port** as well.
+- **SW3**: connects to SW2 via two Gigabit links; SW2's G0/1 has a lower
+  port ID than SW2's G0/2, so **SW3's G0/1 becomes its root port**
+  (the port connected to SW2's G0/1).
+
+The port directly across from any root port is always designated, so
+SW2's G0/1 (facing SW3) and SW3's F0/1 (facing SW4) are also
+designated.
+
+For the remaining redundant links, the switch closer to the root
+(lower total path cost) puts its side into the designated role, and the
+farther switch's side blocks:
+- On the second SW2-SW3 link (G0/2): SW2 is closer to the root than
+  SW3, so **SW2's G0/2 is designated, SW3's G0/2 blocks**.
+- On the three remaining SW3-SW4 links: SW3 is closer to the root than
+  SW4, so **SW3's side is designated on each, SW4's side blocks on
+  each**.
+- On the three remaining SW1-SW2 links: SW1 is the root bridge, so its
+  side is automatically designated on each; **SW2's side blocks on
+  each**.
+
+Only one link per switch pair actually forwards traffic — the other
+parallel links exist purely as STP standby redundancy, which is exactly
+the situation EtherChannel is meant to improve on.
+
+==================================================
+STEP 2 - LAYER 2 ETHERCHANNEL BETWEEN SW1 AND SW2 (PAgP)
+==================================================
+
+Regardless of which EtherChannel protocol is used, every physical port
+bundled into it must share identical configuration: same duplex, same
+speed, same trunk native/allowed VLANs, and the same switchport mode
+(access or trunk). Both switches already match by default here.
+
+---------------- SW1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface range FastEthernet0/1-4           The four physical links to SW2.
+ channel-group 1 mode desirable             `channel-group <n>` begins EtherChannel
+                                            configuration on any protocol — the
+                                            group number only needs to be unique on
+                                            THIS switch (it does not need to match
+                                            the number used on the far end). `mode
+                                            desirable` selects PAgP (Cisco
+                                            proprietary) and actively tries to form
+                                            the channel — PAgP's other option,
+                                            `auto`, only forms a channel if the far
+                                            end is `desirable` (similar to DTP's
+                                            desirable/auto distinction).
+show etherchannel summary                   Shows the new Po1 (Port-channel 1)
+                                            logical interface with flags "SD" — S
+                                            means Layer 2 EtherChannel, D means
+                                            down (expected, since SW2's side isn't
+                                            configured yet). Lists F0/1-F0/4 as its
+                                            member ports.
+interface Port-channel1
+ switchport mode trunk                      Configures the logical Po1 interface as
+                                            a trunk — this single command applies to
+                                            all four bundled physical ports at once.
+
+---------------- SW2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface range FastEthernet0/1-4
+ shutdown                                   Temporarily shuts the ports down while
+                                            reconfiguring, to avoid transient issues.
+ channel-group 2 mode auto                  Deliberately uses a DIFFERENT group
+                                            number (2, vs. SW1's 1) to demonstrate
+                                            that the numbers don't need to match
+                                            between switches. `mode auto` selects
+                                            PAgP passively — it only forms the
+                                            channel because SW1's side is
+                                            `desirable` (an `auto`-`auto` pairing on
+                                            both ends would never form a channel).
+interface Port-channel2
+ switchport trunk encapsulation dot1q        This switch model supports both ISL
+                                            and 802.1Q trunk encapsulation, so the
+                                            encapsulation must be set explicitly
+                                            before trunk mode can be applied.
+ switchport mode trunk
+interface range FastEthernet0/1-4
+ no shutdown                                Re-enables the ports now that
+                                            configuration is complete.
+show etherchannel summary                   Confirms the channel is now up — flags
+                                            "SU" (Layer 2, in use).
+
+==================================================
+STEP 3 - LAYER 3 (STATIC) ETHERCHANNEL BETWEEN SW2 AND SW3
+==================================================
+
+Layer 3 EtherChannels are used far less often than Layer 2 ones, but
+are still testable. This one uses static mode ("on") rather than a
+negotiation protocol — both ends simply assume the channel is active,
+with no negotiation at all.
+
+---------------- SW2 ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+exit
+enable
+ip routing                              Enables Layer 3 routing capability on the
+                                        switch — required before any interface can
+                                        be made into a routed (Layer 3) port.
+configure terminal
+interface range GigabitEthernet0/1-2    The two physical links to SW3.
+ no switchport                          Converts these ports from Layer 2
+                                        (switched) to Layer 3 (routed) ports.
+ channel-group 1 mode on                 `mode on` forms a STATIC EtherChannel —
+                                        no negotiation protocol (PAgP/LACP) is
+                                        used; both sides simply treat the bundle
+                                        as active unconditionally.
+interface Port-channel1
+ ip address 23.0.0.1 255.255.255.0       Assigns an IP address directly to the
+                                        logical Layer 3 Po1 interface.
+
+---------------- SW3 ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ip routing
+interface range GigabitEthernet0/1-2
+ no switchport
+ channel-group 1 mode on
+interface Port-channel1
+ ip address 23.0.0.2 255.255.255.0
+
+---------------- Verify ----------------
+
+Command                            Result
+-----------------------------------------------------------------------------------------
+show etherchannel summary            Shows flag "R" for this Port-channel — Layer
+                                    3 (routed) EtherChannel — plus "U" (in use).
+ping 23.0.0.1 (from SW3)             Succeeds, confirming the Layer 3 EtherChannel
+                                    is passing traffic correctly between SW2 and
+                                    SW3.
+
+==================================================
+STEP 4 - LAYER 2 ETHERCHANNEL BETWEEN SW3 AND SW4 (LACP)
+==================================================
+
+LACP (Link Aggregation Control Protocol) is the IEEE-standard
+equivalent of PAgP — usable between switches from different vendors,
+unlike PAgP which is Cisco-only. LACP's `active` mode is PAgP
+`desirable`'s equivalent (actively tries to form the channel); LACP's
+`passive` mode is PAgP `auto`'s equivalent (only forms the channel if
+the far end is `active`).
+
+---------------- SW3 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+interface range FastEthernet0/1-4           The four physical links to SW4.
+ channel-group 2 mode active                 `mode active` selects LACP and
+                                            actively tries to form the channel.
+interface Port-channel2
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+
+---------------- SW4 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface range FastEthernet0/1-4
+ shutdown
+ channel-group 1 mode active                 SW3's side is already `active`, so
+                                            SW4's side could use either `active` or
+                                            `passive` and still form the channel —
+                                            `active` was used here too.
+interface Port-channel1
+ switchport mode trunk
+interface range FastEthernet0/1-4
+ no shutdown
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show etherchannel summary   Confirms a Layer 2 EtherChannel ("S") that is in use
+                            ("U").
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show etherchannel summary                        Lists every Port-channel
+                                                  interface, its flags (Layer 2/3,
+                                                  up/down/in-use), and bundled
+                                                  member ports — the primary
+                                                  command used throughout this lab.
+show spanning-tree                                Confirms STP now treats each
+                                                  EtherChannel bundle as a single
+                                                  logical link, rather than
+                                                  separately blocking individual
+                                                  member ports.
+show running-config                               Verify `channel-group` mode and
+                                                  Port-channel interface
+                                                  configuration.
+ping <ip>                                          Verify Layer 3 EtherChannel
+                                                  reachability.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Analyzed the pre-EtherChannel topology's spanning tree state, using
+  cross-wired parallel links between switch pairs to demonstrate that
+  root-port selection depends on the neighbor's port ID rather than the
+  local switch's own port number — and confirmed that, without
+  EtherChannel, only one physical link per switch pair actually
+  forwards traffic while the rest sit as blocked standby redundancy.
+✓ Configured a Layer 2 EtherChannel between SW1 and SW2 using PAgP
+  (`desirable` on SW1, `auto` on SW2), bundling all four Fast Ethernet
+  links into a single trunk (Po1/Po2), and confirmed different channel-
+  group numbers on each end don't prevent the channel from forming.
+✓ Configured a static (`mode on`) Layer 3 EtherChannel between SW2 and
+  SW3, converting the Gigabit ports to routed ports first with
+  `no switchport`, assigning IPs directly to each Port-channel
+  interface, and confirming reachability with a successful ping.
+✓ Configured a Layer 2 EtherChannel between SW3 and SW4 using LACP
+  (`active` on both ends), the IEEE-standard alternative to PAgP.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• EtherChannel — bundles multiple physical links between the same two
+  switches into one logical interface (a Port-channel), so all member
+  links can forward traffic simultaneously (with load balanced across
+  them) instead of STP blocking all but one as pure standby redundancy.
+• PAgP (Port Aggregation Protocol) — Cisco-proprietary EtherChannel
+  negotiation protocol, with modes `desirable` (actively forms a
+  channel) and `auto` (only forms one if the far end is `desirable`).
+• LACP (Link Aggregation Control Protocol) — the IEEE 802.3ad standard
+  equivalent to PAgP, interoperable across vendors, with modes `active`
+  (equivalent to PAgP `desirable`) and `passive` (equivalent to PAgP
+  `auto`).
+• `channel-group <n> mode on` — forms a static EtherChannel with no
+  negotiation protocol at all; both sides simply assume the bundle is
+  active. Less safe than PAgP/LACP (a misconfigured link could be
+  silently bundled without any negotiation catching the mismatch), but
+  still valid and testable.
+• EtherChannel member-port consistency requirement — every physical
+  port bundled into the same EtherChannel must match on duplex, speed,
+  trunk native/allowed VLANs, and switchport mode (access vs. trunk);
+  mismatched settings prevent the channel from forming correctly.
+• Layer 2 vs. Layer 3 EtherChannel — a Layer 2 EtherChannel bundles
+  switched (access/trunk) ports into a logical switched interface; a
+  Layer 3 EtherChannel first converts the member ports to routed ports
+  with `no switchport`, then assigns an IP address directly to the
+  logical Port-channel interface, exactly like a normal routed
+  interface.
+• `show etherchannel summary` flag codes — "S" = Layer 2, "R" = Layer 3
+  (routed), "U" = in use (channel is up and forwarding), "D" = down.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully analyzed a four-switch topology's default spanning tree
+behavior (confirming redundant parallel links sit mostly blocked/
+standby without EtherChannel), then configured three distinct
+EtherChannel types across it: a Layer 2 PAgP EtherChannel (SW1-SW2,
+`desirable`/`auto`), a static Layer 3 EtherChannel (SW2-SW3, `mode on`,
+verified with a successful ping across 23.0.0.1/23.0.0.2), and a Layer
+2 LACP EtherChannel (SW3-SW4, `active`/`active`) — confirming via
+`show etherchannel summary` that all three bundles came up correctly
+and now use every physical link simultaneously instead of leaving
+redundant links idle.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+PAgP desirable/auto vs. LACP active/passive
+  Functionally parallel option pairs — one "actively tries," one "only
+  responds."
+  Exam: memorize both pairings side by side (PAgP desirable ≈ LACP
+  active; PAgP auto ≈ LACP passive) and know that two `auto`/`auto` or
+  two `passive`/`passive` ends will NEVER form a channel — at least one
+  side must actively initiate.
+  Real world: LACP is generally preferred over PAgP in real deployments
+  specifically because it's an open standard — usable in mixed-vendor
+  environments (e.g. a Cisco switch uplinked to a non-Cisco switch or
+  server NIC team), whereas PAgP only works between Cisco devices.
+
+Neighbor port ID deciding root port selection
+  When path cost and the neighbor's bridge ID are both tied (as with
+  parallel links to the same switch), STP falls back to comparing the
+  NEIGHBOR's port ID, not the local switch's own.
+  Exam: this exact "neighbor port ID" tiebreaker, and being asked to
+  trace it through a cross-wired topology like this lab's, is a classic
+  precise-detail STP exam question — get the direction (neighbor's ID,
+  not your own) backwards and the whole answer is wrong.
+  Real world: this is precisely the scenario EtherChannel exists to
+  solve — rather than reasoning through which single redundant link STP
+  happens to pick, bundle them all and use every one.
+
+Static (`mode on`) EtherChannel risk
+  No negotiation protocol means no automatic detection of a
+  misconfigured or mismatched link before it's bundled.
+  Exam: know `mode on` requires BOTH ends configured identically as
+  `on` — mixing `on` with PAgP/LACP modes on the opposite end will not
+  form a channel.
+  Real world: static EtherChannels are generally discouraged in
+  production specifically because of this lack of negotiation/safety
+  checking — a cabling mistake or partial misconfiguration that PAgP/
+  LACP would catch and refuse to bundle can instead cause a static
+  EtherChannel to silently malfunction (e.g. a loop or a member port
+  black-holing traffic).
+
+==================================================
+END OF LAB
+==================================================

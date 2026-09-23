@@ -1,0 +1,376 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 056 - OSPF Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot five separate misconfigurations across the five-router,
+multi-area OSPF topology from Lab 055 (OSPF Part 2: Multi-Area):
+a missing loopback network statement on R1, a passive interface
+blocking neighbor formation on R4, a shut-down interface on R2, a
+network statement in the wrong area on R3, and a route summarization
+command using the wrong area number on R3.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same five-router, three-area topology as Lab 055 — see
+[ospf_part2_multi_area.txt](ospf_part2_multi_area.txt) for the full
+diagram and IP addressing table (R4-R1-R2 in Area 1, R2-R3 forming the
+Area 0 backbone link, R3-R5 in Area 2, R2 and R3 as ABRs). Nothing
+physically changed — one OSPF-related configuration problem per
+affected router was introduced.
+
+==================================================
+PROBLEM 1 - R1: LOOPBACK NOT BEING ADVERTISED
+==================================================
+
+---------------- Diagnose (R1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip ospf neighbor        R1 has formed an OSPF neighbor relationship with R2,
+                             but not with R4 (a separate problem, investigated
+                             next in Problem 2).
+show ip protocols             R1's interfaces are correctly shown in Area 1 — no
+                             area-assignment problem here.
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip route                 Confirms R2 is receiving R1's 10.14.0.0/24 network,
+                             but NOT R1's loopback (1.1.1.1) — R1 simply isn't
+                             advertising it, meaning R1's OSPF configuration never
+                             included a `network` statement covering the
+                             loopback address in the first place.
+
+---------------- Fix (R1) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router ospf 1
+ network 1.1.1.1 0.0.0.0 area 1          Adds the missing network statement, so
+                                        R1's loopback is now advertised into
+                                        Area 1.
+ passive-interface Loopback0             Also adds the missing passive-interface
+                                        setting for the loopback, consistent with
+                                        every other router in this topology.
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            R1's loopback (1.1.1.1) now appears in R2's routing
+                         table.
+
+==================================================
+PROBLEM 2 - R4: LOOPBACK'S PASSIVE-INTERFACE SETTING APPLIED TO THE WRONG INTERFACE
+==================================================
+
+---------------- Diagnose (R4) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip ospf neighbor        R4 has no OSPF neighbors at all.
+show ip protocols             Reveals the fault: R4's G0/0 — the actual physical
+                             interface connecting it to R1 — is configured as a
+                             passive interface. A passive interface still
+                             advertises its own network, but never sends or
+                             receives OSPF hello packets, so it can never form a
+                             neighbor relationship over that link.
+
+---------------- Fix (R4) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router ospf 1
+ no passive-interface GigabitEthernet0/0   Removes the passive-interface setting
+                                          from G0/0, allowing it to send/receive
+                                          hellos and form an OSPF neighbor
+                                          relationship with R1 again.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor        (After a short wait for the neighbor relationship to
+ (on R1 or R4)               form) confirms R1 and R4 are now OSPF neighbors.
+
+==================================================
+PROBLEM 3 - R2: F2/0 (LINK TO R3) ADMINISTRATIVELY SHUT DOWN
+==================================================
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip ospf neighbor        R2 has an OSPF neighbor relationship with R1, but not
+                             with R3.
+show ip protocols             No obvious OSPF-level problem here — 10.12.0.0/24
+                             correctly shows in Area 1, and 10.23.0.0/24 plus the
+                             loopback correctly show in Area 0.
+show ip interface brief       Reveals the actual fault: F2/0 (the interface toward
+                             R3) is administratively down — not an OSPF
+                             configuration issue at all, but the interface itself
+                             being disabled.
+show run                      Confirms the `shutdown` command is present on F2/0.
+
+---------------- Fix (R2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface FastEthernet2/0
+ no shutdown                        Re-enables the interface.
+
+---------------- Verify (R2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor    Still shows no neighbor relationship with R3 — the F2/0
+                         fix was necessary but not sufficient; a separate problem
+                         still exists on R3's side (Problem 4).
+
+==================================================
+PROBLEM 4 - R3: 10.23.0.0/24 CONFIGURED IN THE WRONG AREA
+==================================================
+
+---------------- Diagnose (R3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip ospf neighbor        R3 has one OSPF neighbor (R5), but not R2.
+show ip protocols             Reveals the fault: the 10.23.0.0/24 network (the
+                             link to R2) is configured in Area 2 — it should be
+                             in Area 0, since this is the backbone link between
+                             the two ABRs. A mismatched area on either end of a
+                             link prevents OSPF neighbors from forming across it
+                             at all.
+
+---------------- Fix (R3) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router ospf 1
+ network 10.23.0.0 0.0.0.255 area 0          Re-adds the network statement with
+                                            the correct area (0); re-entering a
+                                            `network` statement for an
+                                            already-covered range with a
+                                            different area number corrects the
+                                            area assignment.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor        (After a short wait) confirms R2 and R3 are now OSPF
+ (on R2 or R3)                neighbors.
+
+==================================================
+PROBLEM 5 - R3: SUMMARIZATION USING THE WRONG AREA NUMBER
+==================================================
+
+---------------- Diagnose (R5) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip ospf neighbor        R5 has successfully formed an OSPF neighbor
+                             relationship with R3 — the fault here isn't
+                             adjacency, it's what's being advertised. Per the lab
+                             instructions, R5's routes aren't being properly
+                             summarized.
+show ip route                 Confirms R5 is receiving individual network routes
+                             instead of the expected single 10.0.0.0/8 summary.
+
+---------------- Diagnose (R3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show run                      Reveals the fault: the summarization command was
+                             configured as `area 2 range 10.0.0.0 255.0.0.0` —
+                             an easy mistake to make, since Area 2 is the area
+                             the summary is being ADVERTISED INTO, so it seems
+                             intuitive to reference it. However, the `area
+                             range` command's area number refers to the area the
+                             routes being summarized actually originate in/are
+                             associated with (Area 0, from R3's perspective) —
+                             not the destination area.
+
+---------------- Fix (R3) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router ospf 1
+ no area 2 range 10.0.0.0 255.0.0.0          Removes the incorrect summarization
+                                            command.
+ area 0 range 10.0.0.0 255.0.0.0             Re-adds it with the correct area
+                                            number (0). Reminder: this command
+                                            uses a regular subnet mask, not a
+                                            wildcard mask.
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            Confirms R5 is now receiving the expected single
+                         10.0.0.0/8 summarized route, instead of individual
+                         subnet routes.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor                            Confirms whether an OSPF
+                                                  adjacency has formed — the
+                                                  primary command used to isolate
+                                                  which link/router has a problem.
+show ip protocols                                 Confirms each interface's
+                                                  configured OSPF area, and shows
+                                                  passive-interface settings.
+show ip interface brief                           Confirms whether an interface
+                                                  is administratively up or down —
+                                                  ruling out (or confirming) a
+                                                  non-OSPF cause.
+show running-config                               General-purpose command for
+                                                  spotting a wrong area number or
+                                                  incorrect `area range` command.
+show ip route                                     Confirms which specific routes
+                                                  (individual vs. summarized) a
+                                                  router has actually learned.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R1 missing a `network` statement (and
+  `passive-interface`) for its own loopback, which meant R1 simply
+  never advertised it.
+✓ Found and fixed R4's G0/0 (the physical link to R1) mistakenly
+  configured as a passive interface, which blocked OSPF neighbor
+  formation on that link entirely.
+✓ Found and fixed R2's F2/0 (link to R3) administratively shut down —
+  a non-OSPF, interface-level cause, not a routing protocol
+  configuration problem.
+✓ Found and fixed R3's 10.23.0.0/24 network statement configured in
+  Area 2 instead of Area 0, which (combined with Problem 3) had been
+  preventing R2 and R3 from forming an OSPF neighbor relationship.
+✓ Found and fixed R3's `area range` summarization command using the
+  destination area (2) instead of the origin area (0), which had left
+  R5 receiving individual routes instead of the intended single
+  10.0.0.0/8 summary.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Missing `network` statement for a specific interface (including a
+  loopback) — the interface simply isn't included in OSPF at all,
+  meaning its network is never advertised; distinguishable from a
+  passive-interface problem because a missing `network` statement means
+  the interface doesn't participate in OSPF whatsoever, not just that it
+  withholds hellos.
+• Passive interface applied to the WRONG interface — this lab shows the
+  opposite mistake from the usual "forgot to make the loopback passive"
+  pattern: a physical, neighbor-facing interface accidentally marked
+  passive silently prevents any neighbor relationship from forming over
+  it, while the network is still (uselessly) advertised.
+• A shut-down interface isn't an OSPF problem at all — `show ip
+  protocols` can look completely correct while the actual root cause is
+  a basic `shutdown` on the interface; always check
+  `show ip interface brief` for administrative/line status alongside
+  OSPF-specific commands.
+• Mismatched OSPF area on the two ends of a link prevents adjacency —
+  both ends of a link must agree on the OSPF area number for that
+  segment; a mismatch (like R3's 10.23.0.0/24 being in Area 2 instead of
+  Area 0, disagreeing with R2's side) blocks the neighbor relationship
+  from forming even though both routers are otherwise correctly running
+  OSPF.
+• `area <n> range` — the area number in this command refers to the area
+  the summarized routes originate in/are received in, NOT the
+  destination area the summary is being advertised into; using the
+  destination area number instead (an easy, intuitive-seeming mistake)
+  silently fails to summarize anything meaningful, without generating
+  an error.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed five separate faults across the
+Lab 055 multi-area OSPF topology: R1's missing loopback network
+statement, R4's G0/0 mistakenly marked passive, R2's F2/0 shut down,
+R3's 10.23.0.0/24 network in the wrong area (Area 2 instead of Area 0),
+and R3's route summarization command referencing the wrong area number
+(2 instead of 0). All OSPF neighbor relationships were confirmed formed
+correctly, R1's loopback was confirmed reaching R2, and R5 was
+confirmed receiving the correct single 10.0.0.0/8 summarized route
+instead of individual subnet routes.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Passive interface on the wrong side (neighbor-facing instead of
+loopback/LAN-facing)
+  The general rule ("make loopbacks and end-host-facing interfaces
+  passive") inverted onto a router-to-router link silently blocks
+  adjacency.
+  Exam: know both directions of this fault are testable — a loopback
+  that ISN'T passive (harmless, just unnecessary hello traffic) versus
+  a neighbor-facing interface that IS passive (adjacency completely
+  blocked) — recognize `show ip protocols`' passive interface list as
+  the fastest way to catch either.
+  Real world: this is a genuinely common copy-paste error — cloning a
+  neighbor router's OSPF config as a starting point and forgetting to
+  adjust which specific interface gets `passive-interface` for the new
+  router's different interface layout.
+
+Non-OSPF root causes (a shut-down interface)
+  `show ip protocols` looking perfectly correct doesn't rule out a
+  more basic Layer 1/2 problem.
+  Exam: a frequent "trick" in OSPF troubleshooting scenarios — the
+  routing protocol configuration is completely fine, and the real fault
+  is a shutdown interface, cabling issue, or mismatched
+  speed/duplex — always verify `show ip interface brief` alongside any
+  OSPF-specific command.
+  Real world: this reflects standard real-world troubleshooting
+  discipline — check Layer 1 (is the interface even up) before diving
+  into routing protocol specifics, since no amount of correct OSPF
+  configuration fixes a physically/administratively down link.
+
+`area range`'s area number: origin, not destination
+  A very easy, intuitive-seeming mistake — this lab explicitly calls
+  out why the wrong answer feels right.
+  Exam: memorize firmly that `area <n> range` uses the area the summarized
+  routes belong to at that router (from that router's perspective),
+  not the area the summary is being sent into — expect this exact
+  "off-by-one-area" trap in exam scenario questions.
+  Real world: because this command fails silently (no error, it just
+  summarizes nothing useful), it's a genuinely easy real-world
+  misconfiguration to ship without noticing — verifying the actual
+  resulting routing table on the neighboring area's router (as done
+  here on R5) is the only reliable way to confirm it worked as
+  intended.
+
+==================================================
+END OF LAB
+==================================================

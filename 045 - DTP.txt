@@ -1,0 +1,321 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 045 - DTP (Dynamic Trunking Protocol) / VLANs
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+A review lab (ICND1 material revisited for the ICND2 exam topics):
+understand DTP's dynamic trunk negotiation, then deliberately disable
+it and manually configure every trunk and access port instead. Assign
+PC1-PC4 to their correct VLANs across two switches, and confirm
+inter-VLAN routing (router-on-a-stick on R1) correctly routes traffic
+both within and between VLANs, across both switches.
+
+==================================================
+TOPOLOGY
+==================================================
+
+    VLAN 13 - 13.0.0.0/24              VLAN 24 - 24.0.0.0/24
+  +------------+ +------------+      +------------+ +------------+
+  |    PC1     | |    PC2     |      |    PC3     | |    PC4     |
+  | 13.0.0.11  | | 24.0.0.12  |      | 13.0.0.13  | | 24.0.0.14  |
+  +-----+------+ +-----+------+      +-----+------+ +-----+------+
+       F0/1           F0/2                F0/1           F0/2
+         \             /                    \             /
+          +-----------+                      +-----------+
+                |                                   |
+           +----+----+     G0/2 (trunk)        +----+----+
+           |   SW1   |------------------------ |   SW2   |
+           +----+----+     G0/1 (trunk)        +---------+
+                |
+                | G0/1 (trunk)
+                |
+           +----+----+
+           |    R1   |    Router-on-a-stick (inter-VLAN routing)
+           +----+----+
+             /     \
+      G0/0.13       G0/0.24
+      13.0.0.1       24.0.0.1
+   (VLAN13 gateway) (VLAN24 gateway)
+
+PC1 and PC2 connect to SW1 (F0/1 and F0/2), PC3 and PC4 connect to SW2
+(F0/1 and F0/2) — PC1/PC3 are both in VLAN 13, PC2/PC4 are both in
+VLAN 24, split across both switches specifically to test same-VLAN
+connectivity across a trunk. SW1's G0/2 and SW2's G0/1 form the
+inter-switch trunk. SW1's G0/1 is a second trunk leading to R1, which
+performs router-on-a-stick inter-VLAN routing via two subinterfaces —
+G0/0.13 (VLAN 13) and G0/0.24 (VLAN 24) — each acting as the default
+gateway for its VLAN.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device      Interface     IP Address        Notes
+----------------------------------------------------------------------------------
+PC1         NIC           13.0.0.11         VLAN 13, connected to SW1 F0/1
+PC2         NIC           24.0.0.12         VLAN 24, connected to SW1 F0/2
+PC3         NIC           13.0.0.13         VLAN 13, connected to SW2 F0/1
+PC4         NIC           24.0.0.14         VLAN 24, connected to SW2 F0/2
+R1          G0/0.13       13.0.0.1          Subinterface, VLAN 13 gateway
+R1          G0/0.24       24.0.0.1          Subinterface, VLAN 24 gateway
+
+==================================================
+STEP 1 - EXAMINE DTP, THEN DISABLE IT AND MANUALLY SET TRUNK/ACCESS MODE
+==================================================
+
+DTP (Dynamic Trunking Protocol) can automatically negotiate whether a
+switch port becomes a trunk or stays an access port, based on the mode
+of the port on the other end. This is convenient but a security risk in
+production (an attacker could negotiate an unauthorized trunk), so best
+practice is to always disable it and set port mode explicitly.
+
+---------------- SW1 ----------------
+
+Command                            Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show interface GigabitEthernet0/2  With no configuration yet, DTP is enabled by
+ switchport                        default and the port shows "dynamic auto" mode
+                                   — it will become a trunk only if connected to a
+                                   port in trunk or "dynamic desirable" mode, but
+                                   otherwise stays access.
+configure terminal
+interface GigabitEthernet0/2
+ switchport mode dynamic ?          Reviewing the DTP mode options: `auto` becomes
+                                    a trunk only if the far end actively negotiates
+                                    one; `desirable` actively tries to form a trunk
+                                    with a far end in either `auto` or `desirable`
+                                    mode.
+
+Rather than rely on any DTP mode, DTP is disabled and the mode set
+manually on every port in use.
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+interface GigabitEthernet0/2        The trunk link to SW2.
+ switchport mode trunk               Manually forces trunk mode.
+ switchport nonegotiate               Disables DTP on this port — it will neither
+                                     send nor respond to DTP negotiation frames.
+interface GigabitEthernet0/1        The trunk link to R1 (needed for inter-VLAN
+                                    routing).
+ switchport mode trunk
+ switchport nonegotiate
+interface range FastEthernet0/1-2   The two PC-facing access ports.
+ switchport mode access
+ switchport nonegotiate             DTP is disabled here too, even on access
+                                    ports, as a general best practice.
+exit
+
+---------------- SW2 ----------------
+
+On enabling, SW2 logs: "%SPANTREE-2-BLOCK_PVID_PEER: Blocking
+GigabitEthernet0/1 on VLAN0001. Inconsistent port type." SW1's G0/2 is
+already forced into trunk mode, but because DTP is disabled on SW1's
+end, no negotiation frames reach SW2 — so SW2's still-dynamic G0/1
+interface never becomes a trunk on its own, leaving one end a trunk and
+the other an access port: an inconsistent port type that blocks the
+link until resolved.
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/1        The trunk link to SW1.
+ switchport mode trunk               Manually matches SW1's forced trunk mode,
+                                     resolving the inconsistency.
+ switchport nonegotiate
+interface range FastEthernet0/1-2   The two PC-facing access ports.
+ switchport mode access
+ switchport nonegotiate
+
+==================================================
+STEP 2 - ASSIGN PCs TO THEIR CORRECT VLANS
+==================================================
+
+---------------- SW2 ----------------
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+interface FastEthernet0/1                PC3's port.
+ switchport access vlan 13               Assigns VLAN 13.
+interface FastEthernet0/2                PC4's port.
+ switchport access vlan 24               Assigns VLAN 24.
+
+---------------- SW1 ----------------
+
+Command                                  Explanation
+-----------------------------------------------------------------------------------------
+interface FastEthernet0/1                PC1's port.
+ switchport access vlan 13               Assigns VLAN 13.
+interface FastEthernet0/2                PC2's port.
+ switchport access vlan 24               Assigns VLAN 24.
+
+==================================================
+STEP 3 - REVIEW R1's ROUTER-ON-A-STICK CONFIGURATION (PRE-CONFIGURED)
+==================================================
+
+R1 was already configured for inter-VLAN routing before this lab, and
+is only reviewed here, not built from scratch.
+
+---------------- R1 ----------------
+
+Command                Explanation
+-----------------------------------------------------------------------------------------
+enable
+show running-config     R1's physical GigabitEthernet0/0 interface itself carries
+                        no IP address — instead, two logical subinterfaces are
+                        configured:
+                        - interface G0/0.13, encapsulation dot1Q 13,
+                          ip address 13.0.0.1 255.255.255.0
+                        - interface G0/0.24, encapsulation dot1Q 24,
+                          ip address 24.0.0.1 255.255.255.0
+                        The `encapsulation dot1Q <vlan>` command ties each
+                        subinterface to a specific VLAN's 802.1Q tag; these
+                        addresses were already configured as the default gateway
+                        on PC1-PC4.
+
+==================================================
+STEP 4 - VERIFY CONNECTIVITY (SAME VLAN AND CROSS-VLAN, ACROSS SWITCHES)
+==================================================
+
+---------------- PC1 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 13.0.0.13          Succeeds — pings PC3, same VLAN (13) but on a different
+                        switch (SW2), proving the SW1-SW2 trunk correctly carries
+                        VLAN 13 traffic.
+ping 24.0.0.12          Succeeds — pings PC2, a different VLAN (24) but the same
+                        switch (SW1), proving R1's router-on-a-stick correctly
+                        routes between VLANs.
+ping 24.0.0.14          Succeeds — pings PC4, a different VLAN (24) AND a
+                        different switch, proving both the trunk and inter-VLAN
+                        routing work together correctly.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show interface <if> switchport                   Shows a port's operational and
+                                                  administrative DTP/trunking mode.
+show interfaces trunk                             Lists all currently active trunk
+                                                  ports.
+show vlan brief                                   Confirms VLAN-to-port assignments.
+show running-config                               Verify trunk/access/nonegotiate
+                                                  lines and R1's subinterface
+                                                  configuration.
+ping <destination>                                 Verify end-to-end reachability,
+                                                  same-VLAN and cross-VLAN.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Reviewed DTP's default dynamic auto behavior, then disabled it
+  (`switchport nonegotiate`) and manually set every trunk
+  (`switchport mode trunk`) and access (`switchport mode access`) port
+  on SW1 and SW2.
+✓ Diagnosed and resolved a port-type inconsistency between SW1 and SW2
+  caused by one end being forced to trunk while DTP negotiation was
+  disabled, by manually matching the mode on both ends.
+✓ Assigned PC1/PC3 to VLAN 13 and PC2/PC4 to VLAN 24, split across both
+  switches.
+✓ Reviewed R1's pre-configured router-on-a-stick setup (two
+  subinterfaces, one per VLAN, each with `encapsulation dot1Q`).
+✓ Verified same-VLAN cross-switch connectivity, cross-VLAN same-switch
+  connectivity, and cross-VLAN cross-switch connectivity all work.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• DTP (Dynamic Trunking Protocol) — a Cisco protocol that lets two
+  connected switch ports automatically negotiate whether to become a
+  trunk, based on each port's configured DTP mode (`auto`, `desirable`,
+  `trunk`, or `access`). Convenient by default, but a security
+  best practice is to disable it everywhere and set trunk/access mode
+  manually, since an attacker could otherwise negotiate an unauthorized
+  trunk port.
+• `switchport mode dynamic auto` / `dynamic desirable` — the two DTP
+  negotiation modes: `auto` only becomes a trunk if the far end actively
+  requests one; `desirable` actively tries to form a trunk regardless of
+  what the far end is doing (as long as the far end is `auto` or
+  `desirable` too).
+• `switchport nonegotiate` — disables DTP frame transmission/response on
+  a port entirely, so its trunk/access mode is fixed exactly as
+  configured and never changes based on the far end's behavior.
+• Trunk port-type inconsistency — occurs when one end of a link is a
+  trunk and the other is an access port (or otherwise mismatched trunk
+  encapsulation/native VLAN); the switch detects this and blocks the
+  port rather than passing traffic incorrectly, logging a
+  "%SPANTREE...inconsistent port type" style message.
+• Router-on-a-stick — a single physical router interface split into
+  multiple logical subinterfaces (one per VLAN) using
+  `encapsulation dot1Q <vlan-id>`, allowing one physical link to a
+  switch trunk to perform inter-VLAN routing for every VLAN carried on
+  that trunk, instead of needing one physical interface per VLAN.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully reviewed and manually configured DTP-disabled trunk and
+access ports across SW1 and SW2, resolving a port-type inconsistency
+caused mid-lab by asymmetric trunk negotiation settings. Assigned PC1/
+PC3 to VLAN 13 and PC2/PC4 to VLAN 24, and confirmed R1's
+pre-configured router-on-a-stick setup correctly routes traffic in
+every combination tested: same VLAN across switches, different VLANs on
+the same switch, and different VLANs across switches.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+DTP and `switchport nonegotiate`
+  DTP negotiates trunk status automatically; `nonegotiate` disables that
+  negotiation, forcing whatever mode is explicitly configured.
+  Exam: know that leaving DTP enabled (default `dynamic auto` on most
+  platforms) on an access port facing an end-user device is a real
+  vulnerability — a rogue device could send DTP frames and negotiate
+  itself into a trunk, gaining access to every VLAN on that trunk
+  (a "VLAN hopping" style attack vector); `switchport mode access` +
+  `switchport nonegotiate` closes it.
+  Real world: disabling DTP on every access port is standard hardening
+  practice in real switch deployments — this lab's "always disable it"
+  advice reflects genuine production guidance, not just exam trivia.
+
+Port-type inconsistency from asymmetric negotiation
+  Forcing one end to trunk while disabling negotiation, without matching
+  the other end, breaks the link rather than silently misbehaving.
+  Exam: expect a scenario question where a newly-forced trunk "isn't
+  working" — the fix is confirming both ends agree on trunk mode, since
+  `show interfaces trunk` will simply not list a port stuck in this
+  inconsistent state.
+  Real world: this exact symptom appears whenever one side of a link is
+  reconfigured without coordinating the change with whoever manages the
+  other end — a common real-world cause of "the link just went down"
+  tickets after a partial network change.
+
+Router-on-a-stick with `encapsulation dot1Q`
+  One physical interface, multiple logical subinterfaces, one per VLAN.
+  Exam: know the physical interface itself typically carries no IP
+  address in this design — only the subinterfaces do — and that the
+  trunk carrying multiple VLANs to this router must allow every VLAN
+  the router needs to route for.
+  Real world: router-on-a-stick is common in smaller networks/branch
+  offices where a single router (rather than a dedicated Layer 3
+  switch) handles inter-VLAN routing — cost-effective, but the single
+  physical link becomes a bandwidth bottleneck for all inter-VLAN
+  traffic combined, which is exactly why larger networks move this
+  function onto a Layer 3 switch instead.
+
+==================================================
+END OF LAB
+==================================================

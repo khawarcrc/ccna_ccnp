@@ -1,0 +1,376 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 051 - EtherChannel Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot and fix four separate misconfigurations introduced into
+the three-EtherChannel topology built in Lab 050 (EtherChannel): a
+PAgP/LACP protocol mismatch between SW1 and SW2, a port speed mismatch
+on one of SW2's member interfaces, SW2's Layer 3 EtherChannel to SW3
+missing its member ports entirely, SW3's EtherChannel to SW2
+incorrectly left as Layer 2 instead of Layer 3, and both ends of the
+SW3-SW4 LACP EtherChannel left in passive mode (which never forms a
+channel on its own).
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 050 (EtherChannel) — see
+[etherchannel.txt](etherchannel.txt) for the full diagram: SW1-SW2 (4x
+Fast Ethernet, Layer 2 PAgP EtherChannel), SW2-SW3 (2x Gigabit, static
+Layer 3 EtherChannel, 23.0.0.1/23.0.0.2), SW3-SW4 (4x Fast Ethernet,
+Layer 2 LACP EtherChannel). Nothing physically changed — specific
+EtherChannel configuration lines on each switch were altered to
+introduce the faults below.
+
+==================================================
+PROBLEM 1 - SW1-SW2: WRONG NEGOTIATION PROTOCOL (LACP INSTEAD OF PAgP)
+==================================================
+
+---------------- Diagnose (SW1) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show etherchannel summary    Port-channel 1 exists and is Layer 2, but flagged "D"
+                             (down). Each member interface shows an "I" flag
+                             (standalone) — meaning they aren't actually bundled
+                             into the channel at all. The SW1-SW2 EtherChannel is
+                             supposed to use PAgP, but the configuration is using
+                             LACP instead — a mismatched negotiation protocol
+                             between the two ends prevents the channel from
+                             forming.
+
+---------------- Fix (SW1) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface range FastEthernet0/1-4
+ no channel-group 1                 Removes the (wrong-protocol) channel-group
+                                    membership from each interface.
+no interface Port-channel1           Deletes the logical Port-channel interface
+                                    entirely, for a clean restart.
+interface range FastEthernet0/1-4
+ channel-group 1 mode desirable      Reconfigures using PAgP `desirable` mode, as
+                                    Lab 050 originally intended.
+show etherchannel summary            Port-channel 1 is up, but one member — F0/1 —
+                                    is still down. This is a separate problem
+                                    (Problem 2), not a leftover of this one.
+
+==================================================
+PROBLEM 2 - SW1-SW2: SPEED MISMATCH ON ONE MEMBER PORT
+==================================================
+
+---------------- Diagnose (SW2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show etherchannel summary    F0/4 (the interface connected to SW1's F0/1) is
+                             down.
+show interface FastEthernet0/4   Shows full duplex, but only 10 Mbps — unlike the
+                                 other member interfaces.
+show interface FastEthernet0/3   100 Mbps.
+show interface FastEthernet0/2   100 Mbps.
+show interface FastEthernet0/1   100 Mbps.
+show interface FastEthernet0/1    Also checked on SW1's side (the far end of this
+ (on SW1)                        specific link) — 100 Mbps.
+
+As covered in Lab 050, every port in an EtherChannel bundle must match
+on speed, duplex, and other settings — F0/4's 10 Mbps, against every
+other member port's 100 Mbps, is exactly that kind of mismatch, and is
+why it can't properly join the bundle.
+
+---------------- Fix (SW2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface FastEthernet0/4
+ speed 100                          Corrects F0/4's speed to match every other
+                                    member port.
+show etherchannel summary            Every member interface now shows a "P" flag
+                                    (bundled in the port channel) — the SW1-SW2
+                                    EtherChannel is now fully up.
+
+==================================================
+PROBLEM 3 - SW2-SW3: MISSING MEMBER PORTS ON SW2's SIDE
+==================================================
+
+While still on SW2, a second, unrelated problem is spotted.
+
+---------------- Diagnose (SW2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show etherchannel summary    Port-channel 1 (the Layer 3 EtherChannel to SW3) is
+                             down — and G0/1/G0/2 don't even appear in the output
+                             at all, meaning they were never assigned to the
+                             channel group in the first place.
+
+---------------- Fix (SW2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+interface range GigabitEthernet0/1-2    Assigns both Gigabit ports to the
+ channel-group 1 mode on                 (already Layer 3, per Lab 050's earlier
+                                        `no switchport`/IP address configuration)
+                                        static EtherChannel.
+show etherchannel summary                Port-channel 1 now shows up.
+
+==================================================
+PROBLEM 4 - SW2-SW3: SW3's SIDE LEFT AS LAYER 2 INSTEAD OF LAYER 3
+==================================================
+
+---------------- Diagnose (SW3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show etherchannel summary    Port-channel 1 shows flags "SU" — S means Layer 2,
+                             U means in use. This is wrong: this EtherChannel is
+                             supposed to be Layer 3 (matching SW2's side, which
+                             Problem 3 just brought up as Layer 3/"R").
+show ip interface            Both G0/1 and G0/2 report "Internet protocol
+ GigabitEthernet0/1           processing disabled" — confirming these interfaces
+show ip interface             are still Layer 2 switched ports, not Layer 3
+ GigabitEthernet0/2           routed ports, which is why the resulting
+                             Port-channel came up as Layer 2 instead of Layer 3.
+show run                     Confirms G0/1 and G0/2 are missing the `no
+                             switchport` command entirely.
+
+---------------- Fix (SW3) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface range GigabitEthernet0/1-2
+ no switchport                              Attempting this directly is REJECTED
+                                            by IOS — the interfaces are already
+                                            assigned to a (Layer 2) channel group,
+                                            and a member port's Layer 2/3 status
+                                            can't simply be changed while still
+                                            bundled. The existing Layer 2
+                                            EtherChannel configuration must be torn
+                                            down first.
+no channel-group 1                          Removes the (Layer 2) channel-group
+                                            membership.
+no interface Port-channel1                  Deletes the Layer 2 Port-channel
+                                            interface.
+interface range GigabitEthernet0/1-2
+ no switchport                              Now succeeds — converts the ports to
+                                            Layer 3 (routed) ports.
+ channel-group 1 mode on                    Re-creates the EtherChannel, this time
+                                            correctly as Layer 3 (static, matching
+                                            SW2's side).
+interface Port-channel1
+ ip address 23.0.0.2 255.255.255.0           Assigns the IP address to the new
+                                            (Layer 3) Po1 interface.
+
+---------------- Verify ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+show etherchannel summary        On SW3: now correctly shows "R" (Layer 3).
+show etherchannel summary        On SW2: also confirms up correctly.
+ (on SW2)
+ping 23.0.0.2 (from SW2)          Succeeds — confirms the Layer 3 EtherChannel
+                                 between SW2 and SW3 is fully functional again.
+
+==================================================
+PROBLEM 5 - SW3-SW4: BOTH SIDES SET TO LACP PASSIVE
+==================================================
+
+---------------- Diagnose (SW3) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show etherchannel summary    Port-channel 2 (the LACP EtherChannel to SW4) is
+                             down, and every member interface shows the
+                             "standalone" flag.
+show run                     Confirms `channel-group 2 mode passive` on SW3's
+                             F0/1-4.
+
+---------------- Diagnose (SW4) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show etherchannel summary    Same symptom — down, standalone member ports.
+show run                     Confirms `channel-group 1 mode passive` on SW4's
+                             F0/1-4 as well.
+
+Both ends are set to LACP `passive` mode — but passive mode only
+responds to a channel request, it never initiates one. With both sides
+passive, neither side ever sends the initial negotiation, so the
+channel never forms — at least one side must be `active`.
+
+---------------- Fix (SW4) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface range FastEthernet0/1-4
+ channel-group 1 mode active                 Changes SW4's side to LACP `active`,
+                                            which will now actively initiate
+                                            channel formation — SW3's `passive`
+                                            side responds correctly once one side
+                                            is active.
+
+---------------- Verify ----------------
+
+Command                        Result
+-----------------------------------------------------------------------------------------
+show etherchannel summary        On SW4: Port-channel up, every member interface
+                                 now shows the "P" (bundled) flag.
+show etherchannel summary        On SW3: also confirms up correctly — all
+ (on SW3)                        EtherChannel problems in the topology are now
+                                 resolved.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show etherchannel summary                        The primary command used
+                                                  throughout — shows each
+                                                  Port-channel's Layer 2/3 status,
+                                                  up/down state, and each member
+                                                  port's flag (P = bundled, I =
+                                                  standalone/not bundled).
+show interface <interface>                        Confirms a specific port's speed/
+                                                  duplex — used to isolate the
+                                                  speed-mismatch fault.
+show ip interface <interface>                      Confirms whether a specific
+                                                  interface is Layer 2 (switched,
+                                                  "IP processing disabled") or
+                                                  Layer 3 (routed).
+show running-config                               General-purpose command for
+                                                  spotting channel-group mode
+                                                  mismatches or missing `no
+                                                  switchport` lines.
+ping <ip>                                          Verify Layer 3 EtherChannel
+                                                  reachability end to end.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed SW1's SW1-SW2 EtherChannel using LACP instead of the
+  intended PAgP, by removing and recreating the channel-group/
+  Port-channel configuration with `channel-group 1 mode desirable`.
+✓ Found and fixed a speed mismatch on SW2's F0/4 (10 Mbps instead of
+  100 Mbps, matching every other member port).
+✓ Found and fixed SW2's Layer 3 EtherChannel to SW3 missing its G0/1
+  and G0/2 member ports entirely — they were never assigned to the
+  channel group.
+✓ Found and fixed SW3's side of that same EtherChannel left as Layer 2
+  instead of Layer 3 (missing `no switchport`), which required removing
+  the existing Layer 2 channel-group/Port-channel first before the
+  ports could be converted to Layer 3 and the channel re-created
+  correctly.
+✓ Found and fixed both SW3 and SW4 set to LACP `passive` mode on their
+  shared EtherChannel (which never forms a channel with both sides
+  passive), by changing SW4's side to `active`.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• EtherChannel negotiation protocol mismatch — one side configured for
+  PAgP and the other for LACP (or vice versa) never forms a channel;
+  `show etherchannel summary`'s "I" (standalone) flag on every member
+  port, alongside a "D" (down) Port-channel, is the telltale symptom.
+• Member port speed/duplex mismatch — even with the correct negotiation
+  protocol, one member port with different speed or duplex settings
+  than its siblings will be excluded from the bundle (shown as
+  standalone) while the rest of the channel functions normally —
+  isolate it by comparing `show interface` output across every member
+  port.
+• Changing a channel-group member's Layer 2/3 status while it's still
+  assigned to a channel group — IOS rejects a `no switchport` (or the
+  reverse) attempt on a port that's currently part of an active channel
+  group; the channel-group membership (and the Port-channel interface
+  itself) must be removed first, the port's Layer 2/3 status changed,
+  and then the channel re-created.
+• LACP `passive`/`passive` never forms a channel — passive mode only
+  responds to negotiation, it never initiates it; at least one side of
+  any LACP EtherChannel must be `active` (the same logic as PAgP
+  requiring at least one `desirable` side, or DTP requiring at least one
+  `desirable`-equivalent side).
+• Multiple independent faults on one topology — this lab, like the
+  ICND1 review troubleshooting labs, again demonstrates that a fully
+  broken multi-link topology can have several unrelated root causes
+  (one per link/switch pair here), each requiring its own diagnose-fix-
+  verify cycle rather than a single fix resolving everything.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and resolved five separate EtherChannel faults
+across the three-EtherChannel topology from Lab 050: a PAgP/LACP
+protocol mismatch and a port speed mismatch on the SW1-SW2 channel,
+missing member ports on SW2's side of the SW2-SW3 Layer 3 channel, SW3's
+side of that same channel left as Layer 2 instead of Layer 3, and both
+ends of the SW3-SW4 LACP channel left in passive mode. All three
+EtherChannels were confirmed fully operational afterward via
+`show etherchannel summary` and a successful ping across the Layer 3
+channel.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+`show etherchannel summary` flag reading as a diagnostic shortcut
+  "I" (standalone) on member ports plus "D" (down) on the Port-channel
+  points at a negotiation-level problem (protocol mismatch, or both
+  sides passive/auto); a Port-channel that's up but shows the wrong
+  Layer 2/3 flag ("S" vs "R") points at a `switchport`/`no switchport`
+  configuration problem instead.
+  Exam: expect to be shown `show etherchannel summary` output cold and
+  asked to identify the fault from the flags alone — memorizing what
+  each flag (P, I, S, R, U, D, and the negotiation-mode-related ones)
+  means is directly testable.
+  Real world: this is genuinely the first command run when troubleshooting
+  any EtherChannel in production — it's far faster than reading through
+  full running-configs on both ends.
+
+Reconfiguring a channel-group member's Layer 2/3 status
+  IOS refuses to change `switchport`/`no switchport` on a port that's
+  already an active channel-group member — the channel-group and
+  Port-channel must be removed first.
+  Exam: know this specific IOS behavior/rejection — a scenario question
+  might describe a rejected command and expect you to recognize why
+  (the port is still bundled) and know the correct removal-then-
+  reconfiguration sequence.
+  Real world: this exact sequence (remove channel-group, remove
+  Port-channel interface, reconfigure member ports, recreate the
+  channel) is the standard real-world procedure whenever an existing
+  EtherChannel needs to be converted between Layer 2 and Layer 3, not
+  just a lab-specific trick.
+
+Both sides passive (LACP) or both auto (PAgP)
+  Neither protocol will form a channel unless at least one side
+  actively initiates negotiation.
+  Exam: a frequently tested "why doesn't this EtherChannel come up"
+  scenario, precisely because the configuration LOOKS complete and
+  consistent on both ends (matching speed/duplex/VLANs), and only the
+  negotiation MODE is the problem — easy to overlook if not checked
+  specifically.
+  Real world: this is a realistic misconfiguration that happens when
+  two different engineers configure each end of a link independently
+  (e.g. during a multi-site rollout) without confirming who's setting
+  which side to actively initiate.
+
+==================================================
+END OF LAB
+==================================================

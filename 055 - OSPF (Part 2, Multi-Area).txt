@@ -1,0 +1,370 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 055 - OSPF (Part 2: Multi-Area)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Expand the single-area OSPF topology from Lab 054 (OSPF Part 1) into a
+five-router, three-area hierarchical OSPF design: Area 0 (the backbone,
+which every other area must connect through), Area 1, and Area 2, with
+R2 and R3 acting as ABRs (Area Border Routers — routers with interfaces
+in more than one area). Configure OSPF correctly per-area on all five
+routers, then configure route summarization on both ABRs to reduce the
+size of the routing tables in the non-backbone areas.
+
+==================================================
+TOPOLOGY
+==================================================
+
+    AREA 1                          AREA 0 (BACKBONE)              AREA 2
+
+  +--------+                                                    +--------+
+  |   R4   |  RID 4.4.4.4                                       |   R5   |  RID 5.5.5.5
+  +---+----+                                                    +---+----+
+      |                                                              |
+      | 10.14.0.0/24                                    10.35.0.0/24 |
+      |                                                              |
+  +---+----+   10.12.0.0/24   +--------+   10.23.0.0/24   +---------+
+  |   R1   |------------------|   R2   |------------------|   R3    |
+  +--------+                  +--------+                  +---------+
+  RID 1.1.1.1                 RID 2.2.2.2                 RID 3.3.3.3
+  (all-area1)                 ABR: area1 + area0           ABR: area0 + area2
+                               loopback in area0            loopback in area0
+
+R1 sits at the center of Area 1, connected to both R4 and R2. R2 is an
+ABR — its R1-facing interface is in Area 1, its R3-facing interface is
+in Area 0, and (per this lab's instructions) its loopback is placed in
+Area 0. R3 is the second ABR — its R2-facing interface is in Area 0,
+its R5-facing interface is in Area 2, and its loopback is also placed
+in Area 0. R4 and R5 are each entirely within their own single area
+(Area 1 and Area 2 respectively), including their own loopbacks. Every
+non-backbone area (1 and 2) connects to the network only through Area
+0 — there is no direct Area 1-to-Area 2 link, by OSPF design
+requirement.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device   Area(s)      Interface/Link       Address              Notes
+----------------------------------------------------------------------------------
+R1       1            Loopback0            1.1.1.1/32           Router ID
+R1       1            link to R4           10.14.0.0/24
+R1       1            link to R2           10.12.0.0/24
+R2       1 (to R1),    Loopback0            2.2.2.2/32           Router ID, placed
+         0 (to R3)                                              in Area 0
+R2       1             link to R1           10.12.0.0/24
+R2       0             link to R3           10.23.0.0/24
+R3       0 (to R2),    Loopback0            3.3.3.3/32           Router ID, placed
+         2 (to R5)                                              in Area 0
+R3       0             link to R2           10.23.0.0/24
+R3       2             link to R5           10.35.0.0/24
+R4       1             Loopback0            4.4.4.4/32           Router ID
+R4       1             link to R1           10.14.0.0/24
+R5       2             Loopback0            5.5.5.5/32           Router ID
+R5       2             link to R3           10.35.0.0/24
+
+==================================================
+STEP 1 - CONFIGURE MULTI-AREA OSPF ON ALL FIVE ROUTERS
+==================================================
+
+---------------- R1 (entirely within Area 1) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router ospf 1                               Same process ID (1) used on every
+                                            router in this lab — a deliberate
+                                            contrast with Lab 054, where a
+                                            different process ID was used per
+                                            router specifically to prove it's only
+                                            locally significant; here the more
+                                            typical real-world convention (same
+                                            process ID everywhere) is used instead.
+ network 0.0.0.0 255.255.255.255 area 1      Since every one of R1's interfaces
+                                            belongs to Area 1, this catch-all
+                                            shortcut activates OSPF on all of them
+                                            at once, entirely within Area 1.
+ passive-interface Loopback0                 Suppresses OSPF hellos on the
+                                            loopback (still advertised, just not
+                                            sending/receiving hello traffic).
+ auto-cost reference-bandwidth 100000        Sets the reference bandwidth to
+                                            100,000 Mbps (100 Gbps), per this
+                                            lab's instruction that a 100 Gigabit
+                                            interface should compute to a cost of
+                                            1 — must match on every router.
+
+---------------- R2 (ABR: Area 1 + Area 0) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router ospf 1
+ network 10.12.0.0 0.0.0.255 area 1          The R1-facing link, in Area 1. A /24
+                                            wildcard was used here (matching the
+                                            interface's actual mask), though a
+                                            broader /16 wildcard would also have
+                                            worked — a /8 wildcard would NOT,
+                                            since 10.0.0.0/8 would also match
+                                            R2's other interface (the R3-facing
+                                            one), which needs to be in a
+                                            different area.
+ network 10.23.0.0 0.0.0.255 area 0          The R3-facing link, in Area 0 (the
+                                            backbone) — this is what makes R2 an
+                                            ABR: it has interfaces in two
+                                            different areas.
+ network 2.2.2.2 0.0.0.0 area 0              The loopback, placed in Area 0 per
+                                            this lab's specific instruction (the
+                                            lab notes that for R2 and R3, the
+                                            loopback could technically go in
+                                            either area they touch, but Area 0 was
+                                            chosen).
+ passive-interface Loopback0
+ auto-cost reference-bandwidth 100000
+
+---------------- R3 (ABR: Area 0 + Area 2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router ospf 1
+ network 10.23.0.0 0.0.0.255 area 0          The R2-facing link, in Area 0.
+ network 10.35.0.0 0.0.0.255 area 2          The R5-facing link, in Area 2 — this
+                                            is what makes R3 the second ABR.
+ network 3.3.3.3 0.0.0.0 area 0              The loopback, placed in Area 0 (same
+                                            instruction as R2).
+ passive-interface Loopback0
+ auto-cost reference-bandwidth 100000
+
+---------------- R4 (entirely within Area 1) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router ospf 1
+ network 0.0.0.0 255.255.255.255 area 1      Same catch-all shortcut as R1 — every
+                                            one of R4's interfaces belongs to
+                                            Area 1.
+ passive-interface Loopback0
+ auto-cost reference-bandwidth 100000
+
+---------------- R5 (entirely within Area 2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router ospf 1
+ network 0.0.0.0 255.255.255.255 area 2      Same catch-all shortcut, this time for
+                                            Area 2 — every one of R5's interfaces
+                                            belongs there.
+ passive-interface Loopback0
+ auto-cost reference-bandwidth 100000
+
+==================================================
+STEP 2 - CONFIGURE ROUTE SUMMARIZATION ON BOTH ABRs
+==================================================
+
+Before summarization, R5's routing table contains individual routes to
+every 10.x.0.0/24 subnet in the network — 10.12.0.0/24, 10.14.0.0/24,
+and 10.23.0.0/24 — even though R5 only has a single path (through R3)
+to reach any of them. In a small lab this is harmless, but in a large
+network, replacing many specific routes with one summary route
+meaningfully reduces routing table size and OSPF's computational load.
+
+---------------- R3 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1
+ area 0 range 10.0.0.0 255.0.0.0            Summarizes every 10.x.x.x route R3
+                                            currently sees associated with Area 0
+                                            (10.12.0.0/24 and 10.14.0.0/24, which
+                                            actually originate in Area 1 but
+                                            arrive at R3 as Area 0 inter-area
+                                            routes via R2, plus 10.23.0.0/24,
+                                            native to Area 0 itself) into a
+                                            single 10.0.0.0/8 route, before
+                                            advertising it onward into Area 2.
+                                            The mask given here (255.0.0.0) is a
+                                            REGULAR subnet mask, not a wildcard
+                                            mask — easy to mix up with the
+                                            `network` command's wildcard syntax
+                                            used earlier in this lab.
+
+Loopback addresses (1.1.1.1/32, 2.2.2.2/32, etc.) fall outside the
+10.0.0.0/8 range and are therefore unaffected — they continue to be
+advertised individually.
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            Instead of separate routes to 10.12.0.0/24, 10.14.0.0/24,
+                         and 10.23.0.0/24, R5 now has a single summarized
+                         10.0.0.0/8 route learned via OSPF. R5's own directly
+                         connected 10.35.0.0/24 network is still listed
+                         separately, as expected (a directly connected network is
+                         never replaced by a learned summary).
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router ospf 1
+ area 0 range 10.0.0.0 255.0.0.0            Same summarization, configured on R2
+                                            (the other ABR) — R1 and R4 don't need
+                                            to individually know about R3's
+                                            10.23.0.0/24 or (via R3's own
+                                            summarization) the area 2 network
+                                            10.35.0.0/24; a single 10.0.0.0/8
+                                            summary is enough.
+
+---------------- Verify (R4) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            (After allowing a few seconds for reconvergence) R4 now
+                         shows a single summarized 10.0.0.0/8 route via OSPF,
+                         rather than individual routes to 10.23.0.0/24 and
+                         10.35.0.0/24.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip ospf neighbor                            Confirms OSPF adjacencies formed
+                                                  correctly on every link.
+show ip route                                    Shows the routing table,
+                                                  including OSPF-learned routes
+                                                  and — after Step 2 — the
+                                                  summarized 10.0.0.0/8 entries.
+show ip ospf interface <interface>                Confirms which area a specific
+                                                  interface belongs to.
+show ip protocols                                 Confirms process ID, router ID,
+                                                  and per-area network
+                                                  configuration.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured multi-area OSPF across five routers using a single,
+  consistent process ID (1) on every router (unlike Lab 054, which
+  deliberately varied it), correctly placing each interface in Area 1,
+  Area 0 (the backbone), or Area 2 as required, with R2 and R3 acting
+  as ABRs between the backbone and their respective non-backbone area.
+✓ Placed R2's and R3's loopbacks specifically in Area 0, per this
+  lab's instruction (an ABR's loopback can go in either area it
+  touches).
+✓ Enabled `passive-interface` on every router's loopback and set a
+  consistent `auto-cost reference-bandwidth 100000` (100 Gbps) across
+  all five routers.
+✓ Configured `area 0 range 10.0.0.0 255.0.0.0` on both ABRs (R2 and
+  R3), summarizing every 10.x.x.x subnet into a single 10.0.0.0/8 route
+  advertised into the neighboring non-backbone area, and confirmed R4
+  and R5 each ended up with one summarized route instead of multiple
+  individual ones (while loopback routes, outside the summarized range,
+  remained unaffected).
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Multi-area OSPF and the backbone area (Area 0) — OSPF scales to large
+  networks by dividing routers into areas, but every non-backbone area
+  must connect directly to Area 0; inter-area traffic must pass through
+  the backbone, with no direct area-to-area link allowed to bypass it.
+• ABR (Area Border Router) — a router with interfaces in more than one
+  OSPF area (R2 and R3 in this lab); ABRs are exactly where route
+  summarization between areas is configured, since they're the natural
+  boundary point where routes cross from one area into another.
+• `network <addr> <wildcard> area <n>` per-interface area assignment —
+  each interface's OSPF area is set individually via which `network`
+  statement its address falls under; an ABR simply has multiple
+  `network` statements pointing at different areas.
+• `area <origin-area> range <network> <mask>` — the OSPF inter-area
+  route summarization command, configured on an ABR. The area number
+  given is the area the routes being summarized are associated with
+  FROM THAT ROUTER'S perspective (not necessarily the area the summary
+  is being sent into) — and critically, the mask here is a normal
+  subnet mask, not a wildcard mask like the `network` command uses,
+  which is an easy point of confusion.
+• Summarization doesn't affect out-of-range routes — a summary range
+  only absorbs routes that actually fall within it; loopback /32
+  addresses using a completely different range (e.g. 1.1.1.1/32 against
+  a 10.0.0.0/8 summary) continue to be advertised individually, exactly
+  as demonstrated in this lab.
+• Same OSPF process ID across all routers — while Lab 054 proved
+  process IDs don't need to match, this lab uses the same ID (1)
+  everywhere, reflecting the more typical real-world convention even
+  though it isn't a requirement.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully expanded the single-area topology from Lab 054 into a
+five-router, three-area OSPF hierarchy (Area 1 - Area 0 backbone - Area
+2), with R2 and R3 correctly configured as ABRs, loopbacks placed in
+Area 0 per instruction, passive interfaces and a consistent 100 Gbps
+reference bandwidth set on every router. Configured
+`area 0 range 10.0.0.0 255.0.0.0` on both ABRs and confirmed both R4
+(Area 1) and R5 (Area 2) each received a single summarized 10.0.0.0/8
+route in place of multiple individual subnet routes, while their
+unrelated loopback routes remained unaffected.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Every non-backbone area must touch Area 0
+  No direct area-to-area link is allowed to bypass the backbone.
+  Exam: expect a diagram-based question asking whether a given
+  multi-area topology is valid OSPF — the single most common invalid
+  design shown is two non-backbone areas connected directly to each
+  other with no Area 0 in the path; know to reject that immediately.
+  Real world: large enterprise OSPF deployments are deliberately
+  designed around this constraint — Area 0 is treated as a dedicated
+  "core" that every other area's traffic must transit, which is also
+  exactly why summarization on ABRs (as done in this lab) matters so
+  much at scale — Area 0 potentially carries traffic between every
+  other area combined.
+
+`area <origin> range` vs. the `network` command's wildcard mask
+  Same general shape (area/network/mask), but genuinely different mask
+  types — a common mix-up.
+  Exam: memorize that `area range` uses a normal subnet mask while
+  `network` uses a wildcard (inverse) mask — a classic "gotcha" pairing
+  exam questions specifically test, precisely because the commands look
+  similar enough to blur together under time pressure.
+  Real world: this distinction matters in real configuration review too
+  — misreading one for the other while auditing a `router ospf` config
+  block is an easy, genuinely-made real-world mistake.
+
+Route summarization scaling benefit
+  Barely visible in a 5-router lab, but the same principle scales
+  dramatically in large networks.
+  Exam: know summarization's benefits generally — smaller routing
+  tables, less CPU/memory used maintaining them, and (specific to
+  link-state protocols like OSPF) fewer LSA floods needed when a
+  summarized subnet's individual routes change, since a summary can
+  hide small topology changes from other areas entirely.
+  Real world: this LSA-flooding-reduction benefit is actually the
+  bigger real-world reason to summarize at area boundaries in a large
+  OSPF deployment — it isolates topology churn within one area instead
+  of forcing every other area to recompute anything.
+
+==================================================
+END OF LAB
+==================================================

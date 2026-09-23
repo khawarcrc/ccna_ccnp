@@ -1,0 +1,406 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 044 - Review Troubleshooting Lab 2
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot and fix five deliberately-introduced misconfigurations on
+the exact same topology built in Lab 043 (Review Configuration Lab 2):
+a missing RIP route caused by a passive interface, a broken DHCP relay
+agent, a broken PAT (NAT overload) rule referencing the wrong ACL, a
+DHCP pool missing its DNS server, and SSH access broken by a vty
+transport-input setting left on Telnet. Each problem is diagnosed with
+`show` commands before being fixed, following a consistent
+symptom -> confirm -> isolate -> fix -> verify pattern.
+
+This was the final ICND1-series lab; the same topology, addressing, and
+starting configuration as Lab 043 apply here (see
+[review_configuration_lab_2.txt](review_configuration_lab_2.txt) for
+the full topology diagram and IP addressing table) — only specific
+lines were deliberately broken.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same topology as Lab 043 — PC1/PC2/PC3 on LAN1 (192.168.1.0/24, behind
+R1), PC4/PC5/PC6 on LAN2 (192.168.2.0/24, behind R2), R1/R2/R3 joined by a
+shared 1.2.3.0/24 segment, and Server1 (3.0.0.100) on R3's side acting
+as the syslog/DNS server. Nothing physically changed from Lab 043 —
+only specific configuration lines were altered to introduce each fault
+below.
+
+==================================================
+PROBLEM 1 - R2/R3 NOT RECEIVING THE 192.168.1.0/24 RIP ROUTE FROM R1
+==================================================
+
+---------------- Diagnose ----------------
+
+Command                                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip rip database (on R2)            Shows a route to R3's inside network
+                                        (3.0.0.0/24) but not to 192.168.1.0/24.
+show ip rip database (on R3)            Shows a route to R2's inside network
+                                        (192.168.2.0/24) but also not to
+                                        192.168.1.0/24. Since R2 and R3 are
+                                        exchanging routes fine with each other,
+                                        the fault points specifically at R1.
+show ip rip database (on R1)            R1 is receiving routes from both R2 and
+                                        R3, but its own 192.168.1.0/24 isn't
+                                        being advertised out — a one-directional
+                                        problem, which usually means an
+                                        interface-level RIP restriction rather
+                                        than a missing `network` statement
+                                        (since R1 clearly has RIP running and is
+                                        receiving updates).
+show ip protocols (on R1)               Displays routing protocol details
+                                        including any passive interfaces —
+                                        reveals GigabitEthernet0/1 is configured
+                                        as a passive interface under RIP.
+
+A passive interface still listens for incoming RIP advertisements
+(explaining why R1 successfully receives R2's and R3's routes) but
+suppresses sending any RIP advertisements out that interface —
+explaining exactly why R1 never advertises 192.168.1.0/24 to anyone.
+
+---------------- Fix (R1) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router rip
+ no passive-interface GigabitEthernet0/1    Removes the passive-interface
+                                            restriction, allowing R1 to resume
+                                            sending RIP advertisements out G0/1
+                                            (its link to the shared segment).
+exit
+
+---------------- Verify ----------------
+
+show ip rip database (on R2 and R3)         Both now show a route to
+                                            192.168.1.0/24, confirming the fix.
+
+==================================================
+PROBLEM 2 - HOSTS ON 192.168.2.0/24 NOT RECEIVING A DHCP ADDRESS
+==================================================
+
+---------------- Diagnose ----------------
+
+Command                            Result / Explanation
+-----------------------------------------------------------------------------------------
+ipconfig (on PC4)                   Shows an address in the 169.254.0.0/16 range
+                                    — an Automatic Private IP Address (APIPA),
+                                    which Windows self-assigns when no DHCP
+                                    server responds at all.
+ipconfig /release, ipconfig /renew  Renew still fails to obtain a real address.
+ (on PC4)
+ipconfig (on PC5)                   Also shows an APIPA address, confirming the
+                                    DHCP failure isn't specific to one PC.
+ipconfig (on PC6)                   Also shows an APIPA address — the failure is
+                                    network-wide across LAN2, not one specific
+                                    host.
+show ip interface GigabitEthernet0/0  Since R1 (the DHCP server) is not directly
+ (on R2)                             connected to 192.168.2.0/24, LAN2's DHCP
+                                    requests depend entirely on R2 acting as a
+                                    DHCP relay agent — this command reveals "Helper
+                                    address is not set" on R2's LAN-facing
+                                    interface, meaning the relay was never
+                                    configured (or was removed).
+
+---------------- Fix (R2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/0
+ ip helper-address 1.2.3.1                 Restores the DHCP relay agent
+                                            configuration, forwarding DHCP
+                                            broadcasts from LAN2 as a unicast
+                                            request to R1's outside address.
+exit
+ping 1.2.3.1                               Confirms R2 can reach that helper
+                                            address before relying on it — rules
+                                            out a routing problem as a
+                                            compounding factor.
+
+---------------- Verify ----------------
+
+ipconfig /release, ipconfig /renew (on PC4)   Now succeeds and obtains a real
+                                              192.168.2.0/24 address.
+
+==================================================
+PROBLEM 3 - PAT (NAT OVERLOAD) NOT WORKING ON R1
+==================================================
+
+---------------- Diagnose ----------------
+
+Command                                  Result / Explanation
+-----------------------------------------------------------------------------------------
+ping 3.0.0.100 (from PC1)                 Succeeds — reachability itself is fine
+                                          (RIP is working), so this isn't a
+                                          routing problem.
+show ip nat translations (on R1)          Empty — no translations are happening
+                                          at all despite the successful ping,
+                                          which is suspicious since a successful
+                                          ping to a routed public-style address
+                                          should have created one.
+show ip nat statistics (on R1)            Confirms the inside/outside interface
+                                          markings (`ip nat inside`/`ip nat
+                                          outside`) are correctly assigned — so
+                                          that part of the configuration isn't
+                                          the fault.
+show run | include nat (on R1)            Shows the NAT statement:
+                                          `ip nat inside source list 2 interface
+                                          GigabitEthernet0/1 overload` — it
+                                          references access-list 2.
+show access-lists (on R1)                 Reveals the actual configured ACL is
+                                          numbered 1, not 2 — there is no
+                                          access-list 2 at all, so the NAT
+                                          statement references a
+                                          nonexistent/empty ACL and therefore
+                                          matches nothing.
+
+---------------- Fix (R1) ----------------
+
+Command                                              Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+no ip nat inside source list 2 interface             Removes the broken NAT
+ GigabitEthernet0/1 overload                          statement referencing the
+                                                      wrong (nonexistent)
+                                                      access-list number.
+ip nat inside source list 1 interface                Re-creates the NAT statement
+ GigabitEthernet0/1 overload                          pointing at the correct,
+                                                      actually-configured
+                                                      access-list 1.
+exit
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 3.0.0.100 (from PC1)   Succeeds again.
+show ip nat translations    Now shows an active translation for PC1's address,
+ (on R1)                    confirming PAT is functioning.
+
+==================================================
+PROBLEM 4 - HOSTS ON 192.168.1.0/24 NOT RECEIVING A DNS SERVER VIA DHCP
+==================================================
+
+---------------- Diagnose ----------------
+
+Command                        Result / Explanation
+-----------------------------------------------------------------------------------------
+ipconfig /all (on PC1)          Shows a valid IP address and gateway, but no DNS
+                                server listed at all.
+show run (on R1)                Confirms DHCP Pool1's configuration has no
+                                `dns-server` line — it was either never
+                                configured or was removed.
+
+==================================================
+
+---------------- Fix (R1) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip dhcp pool POOL1                  Re-enter the existing pool.
+ dns-server 3.0.0.100               Add Server1 as the DNS server handed out to
+                                    Pool1 clients.
+exit
+
+---------------- Verify ----------------
+
+Command                             Result
+-----------------------------------------------------------------------------------------
+ipconfig /release, ipconfig /renew   PC1 now receives a DNS server address in its
+ (on PC1)                            lease.
+ping server1 (on PC1)                 Succeeds, resolving the hostname via DNS
+                                     before pinging — confirms DNS is fully
+                                     functional again.
+
+==================================================
+PROBLEM 5 - CANNOT SSH INTO R1
+==================================================
+
+---------------- Diagnose ----------------
+
+Command                                  Result / Explanation
+-----------------------------------------------------------------------------------------
+ssh -l cisco 192.168.1.1 (from PC1)       Fails, using the same username (cisco)
+                                          and password (CCNA) that worked in the
+                                          previous lab.
+show run | begin line (on R1)             Shows the vty line configuration —
+                                          reveals `transport input telnet`
+                                          instead of `transport input ssh`,
+                                          meaning the vty lines only accept
+                                          Telnet connections, not SSH, even
+                                          though SSH itself (RSA key, `ip ssh
+                                          version 2`, local user account) is
+                                          still correctly configured.
+
+---------------- Fix (R1) ----------------
+
+Command                             Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+line vty 0 15
+ transport input ssh                 Restricts/corrects the vty lines to accept
+                                     SSH connections (replacing the incorrect
+                                     Telnet-only setting).
+exit
+
+---------------- Verify ----------------
+
+Command                                  Result
+-----------------------------------------------------------------------------------------
+ssh -l cisco 192.168.1.1 (from PC1)       Succeeds this time — prompted for the
+                                          password (CCNA), then logged in.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip rip database                             Confirms RIP routes are being
+                                                  learned/advertised as expected.
+show ip protocols                                 Confirms no unwanted passive
+                                                  interfaces remain configured
+                                                  under RIP.
+show ip interface <interface>                     Confirms a DHCP relay agent's
+                                                  helper address is set correctly.
+show ip nat translations / show ip nat statistics Confirms NAT/PAT translations are
+                                                  actively occurring and interfaces
+                                                  are correctly marked.
+show access-lists                                 Confirms an ACL referenced by NAT
+                                                  actually exists under that number.
+show running-config                               General-purpose command for
+                                                  spotting any misconfigured or
+                                                  missing line across every feature
+                                                  in this lab.
+ipconfig /all                                     Confirms a PC's full DHCP-leased
+                                                  configuration, including DNS
+                                                  server.
+ssh -l <user> <ip>                                 Confirms SSH access works
+                                                  end-to-end.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and removed a passive-interface restriction on R1's G0/1 that
+  was silently preventing R1 from advertising its LAN1 route via RIP.
+✓ Found and restored a missing `ip helper-address` on R2, which had
+  broken DHCP relay for LAN2's hosts (visible as APIPA addresses).
+✓ Found a PAT statement on R1 referencing a nonexistent access-list
+  (list 2 instead of the actual list 1), fixed by replacing it with the
+  correct statement.
+✓ Found a DHCP pool on R1 missing its `dns-server` line and restored it,
+  fixing DNS resolution for LAN1 clients.
+✓ Found R1's vty lines restricted to `transport input telnet` instead of
+  `transport input ssh` and corrected it, restoring SSH access.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Passive interface (RIP/routing protocols generally) — an interface
+  configured to still listen for and process incoming routing protocol
+  advertisements, but never send its own advertisements out. Used
+  intentionally on interfaces that shouldn't participate in routing
+  protocol traffic (e.g. a LAN facing only end hosts), but a silent,
+  easy-to-miss cause of one-directional route-advertisement failures
+  when applied to the wrong interface.
+• `show ip protocols` — a command that summarizes a router's routing
+  protocol configuration (protocol, timers, networks, and any passive
+  interfaces), making it the fastest way to spot a passive-interface
+  misconfiguration rather than reading through the entire
+  running-config.
+• NAT/PAT statement referencing the wrong ACL number — since `ip nat
+  inside source list <n> ...` simply references an ACL by number, a
+  typo'd or mismatched number silently matches nothing (rather than
+  producing an error), because a nonexistent ACL number is treated as
+  matching no traffic at all — not a rejected configuration.
+• Symptom-first troubleshooting order — this lab's method for each
+  problem is consistent: confirm the symptom from the affected host's
+  perspective first (ping/ipconfig/ssh failing), then work backward
+  toward the responsible device and specific misconfigured line, rather
+  than reading through every router's entire configuration up front.
+• DHCP configuration errors present differently depending on what's
+  missing — a completely absent/unreachable DHCP server or relay
+  produces an APIPA (169.254.0.0/16) address; a reachable DHCP server
+  missing one specific option (like `dns-server`) instead produces a
+  normal lease that's simply missing that one piece of information —
+  recognizing which symptom you're looking at narrows down where to
+  look immediately.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed all five deliberately-introduced
+misconfigurations from Lab 043's topology: a passive RIP interface on
+R1, a missing DHCP relay helper-address on R2, a PAT statement on R1
+pointing at the wrong ACL number, a DHCP pool on R1 missing its DNS
+server, and R1's vty lines restricted to Telnet instead of SSH. Each fix
+was verified independently before moving to the next problem, restoring
+full RIP reachability, DHCP (including DNS) on both LANs, working PAT,
+and SSH access.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Passive interface breaking one-directional route advertisement
+  A passive interface still receives routing updates but never sends
+  them — producing a subtle, easy-to-misdiagnose asymmetric routing
+  failure rather than a total outage.
+  Exam: expect a scenario where "R1 receives routes fine but its own
+  network isn't showing up elsewhere" — the answer is almost always a
+  passive-interface (or a missing `network` statement, which this lab
+  explicitly ruled out first by confirming R1 IS running RIP and IS
+  receiving updates).
+  Real world: passive interfaces are deliberately used on
+  purpose on user-facing LAN interfaces (to stop routing protocol
+  traffic/updates from being exposed to end hosts) — the bug here isn't
+  that passive interfaces are bad, it's that one was left on the wrong
+  (transit) interface.
+
+NAT/PAT statement pointing at a nonexistent ACL number
+  Referencing ACL number 2 when only ACL 1 exists doesn't error at
+  configuration time — it just means the NAT rule effectively does
+  nothing, since it matches against an ACL with no entries.
+  Exam: know that Cisco IOS commonly accepts references to
+  not-yet-created object numbers (ACLs, route-maps, etc.) without
+  complaint — the failure only becomes visible in the resulting
+  behavior (`show ip nat translations` staying empty), not in an error
+  message at config time.
+  Real world: this exact class of bug — a policy/rule referencing the
+  wrong object by number/name — is one of the most common real-world
+  causes of "it looks configured but doesn't work," precisely because
+  there's often no error to point you at the mistake; disciplined
+  naming (named ACLs instead of numbered ones, where supported) reduces
+  this risk in production.
+
+DHCP symptom differences (APIPA vs. missing option)
+  No DHCP server/relay reachable at all -> APIPA address; DHCP server
+  reachable but missing a specific option -> normal lease minus that
+  option.
+  Exam: this distinction is a fast diagnostic shortcut — seeing a
+  169.254.x.x address immediately points at the DHCP process/relay
+  path itself, while a real address with a missing DNS/gateway points
+  at the pool's configuration instead.
+  Real world: helpdesk-level DHCP troubleshooting leans on this same
+  shortcut constantly — an APIPA address escalates straight to
+  "is DHCP/relay reachable at all," while a normal-looking address with
+  one broken feature (e.g. can't resolve names) narrows straight to a
+  specific pool option.
+
+==================================================
+END OF LAB
+==================================================

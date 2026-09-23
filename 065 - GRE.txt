@@ -1,0 +1,335 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 065 - GRE
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure a GRE (Generic Routing Encapsulation) tunnel between R1 and
+R2, which are not directly connected but both reach a shared service
+provider network. The GRE tunnel creates a virtual point-to-point link
+between them (tunnel interfaces addressed from the same
+192.168.1.0/30 network), letting them behave as if directly connected.
+Configure static routes so each router can actually reach the other's
+tunnel destination address across the service provider network, then
+run EIGRP over the tunnel so R1 and R2 learn each other's internal
+(LAN-side) networks.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +--------+                                              +--------+
+  |  PC1   |  10.0.1.100                     10.0.2.100   |  PC2   |
+  +---+----+                                               +---+----+
+      |                                                        |
+   G0/0 |  10.0.1.0/24                        10.0.2.0/24  | G0/0
+      |                                                        |
+  +---+----+   S0/0/0        S0/0/0   +---------+ ... +---------+   S0/0/0        S0/0/0   +---+----+
+  |   R1   |------------------------- |  SPR1   | ... |  SPR2   | -------------------------|   R2   |
+  +---+----+   10.0.0.2   10.0.0.1    +---------+     +---------+    20.0.0.1   20.0.0.2    +---+----+
+      |                                                                                          |
+      |                    Tunnel0: 192.168.1.1/30 <=====GRE tunnel=====> Tunnel0: 192.168.1.2/30
+      +----------------------------------------------------------------------------------------+
+        (tunnel source/destination = each router's real S0/0/0 address, reached via the
+         service provider network in between — R1 and R2 are NOT physically/directly connected)
+
+R1 and R2 each connect to their own service provider router (SPR1,
+SPR2 — the same pattern as the earlier PPP labs), with no direct
+physical link between R1 and R2 themselves. A GRE tunnel (Tunnel0 on
+each router) is built on top of that existing IP reachability, giving
+R1 and R2 a virtual direct connection addressed from
+192.168.1.0/30 (R1 = .1, R2 = .2). PC1 (10.0.1.0/24) sits behind R1;
+PC2 (10.0.2.0/24) sits behind R2.
+
+==================================================
+STEP 1 - CONFIGURE THE GRE TUNNEL ON R1
+==================================================
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface tunnel 0                          Creates a logical tunnel interface —
+                                            not a physical interface at all,
+                                            purely virtual. Can also be typed as
+                                            the shorthand `interface t0`.
+ ip address 192.168.1.1 255.255.255.252       Assigns the tunnel interface an
+                                            address from the shared
+                                            192.168.1.0/30 tunnel network.
+ tunnel source Serial0/0/0                    Specifies which of R1's REAL
+                                            interfaces the tunnel traffic will
+                                            actually be sourced from — S0/0/0,
+                                            since that's the interface R1 uses
+                                            to reach R2 via the service provider
+                                            network.
+ tunnel destination 20.0.0.2                  Specifies the REAL (not tunnel)
+                                            destination address the tunnel
+                                            traffic is sent to — R2's actual
+                                            S0/0/0 address, the one facing its
+                                            own service provider.
+
+==================================================
+STEP 2 - CONFIGURE THE GRE TUNNEL ON R2
+==================================================
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface tunnel 0
+ ip address 192.168.1.2 255.255.255.252       R2's side of the same
+                                            192.168.1.0/30 tunnel network.
+ tunnel source Serial0/0/0                    R2's real interface facing its own
+                                            service provider.
+ tunnel destination 10.0.0.2                  R1's real S0/0/0 address — source
+                                            and destination are simply reversed
+                                            compared to R1's configuration.
+
+==================================================
+STEP 3 - FIX MISSING UNDERLYING REACHABILITY (STATIC ROUTES)
+==================================================
+
+Configuring the tunnel interfaces alone isn't enough — each router
+still needs to know how to actually route packets TO the other
+router's real (tunnel destination) address across the service provider
+network. Without that, the tunnel itself can never come up.
+
+---------------- Diagnose (R2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route                 R2 has no route at all to 10.0.0.2 (R1's tunnel
+                             destination).
+ping 192.168.1.1               Fails — no response, since the underlying GRE
+                             traffic itself has nowhere to be routed.
+
+---------------- Fix (R2) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+exit
+ip route 0.0.0.0 0.0.0.0 20.0.0.1            A static default route via SPR2,
+                                            giving R2 a path to reach R1's real
+                                            address. This doesn't have to be a
+                                            default route specifically — the
+                                            only real requirement is that each
+                                            router can reach the OTHER router's
+                                            configured tunnel destination
+                                            address, by whatever means.
+
+---------------- Fix (R1) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+exit
+ip route 0.0.0.0 0.0.0.0 10.0.0.1            Same idea, on R1, via SPR1.
+
+---------------- Verify (R1) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 192.168.1.2         Succeeds now — the underlying routes let the GRE-
+                         encapsulated tunnel traffic actually reach the other
+                         router.
+show ip interface brief   Tunnel0 shows up/up.
+show interface tunnel 0    Confirms the configured tunnel source and destination,
+                          and shows the tunnel protocol as GRE, running over IP
+                          (GRE/IP).
+
+==================================================
+STEP 4 - CONFIGURE EIGRP OVER THE TUNNEL
+==================================================
+
+With the tunnel itself up, EIGRP is configured to advertise both each
+router's internal LAN and the tunnel network itself, so R1 and R2 can
+learn about each other's internal networks through the tunnel.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router eigrp 100
+ network 10.0.1.0 0.0.0.255                   Advertises R1's internal LAN
+                                            (behind G0/0). The exact /24
+                                            wildcard mask is used here, though —
+                                            as with any EIGRP `network`
+                                            statement — a broader
+                                            classful-default `network 10.0.0.0`
+                                            would also have activated EIGRP on
+                                            G0/0 (among other interfaces).
+ network 192.168.1.0 0.0.0.3                  Activates EIGRP on the tunnel
+                                            interface itself, using the exact
+                                            /30 wildcard mask — this is what
+                                            actually allows R1 and R2 to become
+                                            EIGRP neighbors ACROSS the tunnel.
+
+---------------- R2 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+router eigrp 100
+ network 10.0.2.0 0.0.0.255                   Advertises R2's internal LAN.
+ network 192.168.1.0 0.0.0.3                   Activates EIGRP on the tunnel
+                                            interface — immediately triggers a
+                                            new EIGRP adjacency message, with
+                                            the neighbor showing up over the
+                                            Tunnel0 interface, at R1's tunnel
+                                            address (192.168.1.1).
+
+---------------- Verify ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route (on R2)    Shows R1's 10.0.1.0/24 network, learned via EIGRP over
+                         the tunnel.
+ping 10.0.1.100 (from     Succeeds — confirms end-to-end reachability from PC2,
+ PC2)                     through R2, across the GRE tunnel, to R1, and finally
+                         to PC1.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief                          Confirms tunnel interface
+                                                  up/up state and IP address.
+show interface tunnel 0                           Shows tunnel source/
+                                                  destination and confirms
+                                                  GRE/IP as the tunnel
+                                                  protocol.
+show ip route                                    Confirms static routes
+                                                  (reaching the tunnel
+                                                  destination) and EIGRP-
+                                                  learned routes (across the
+                                                  tunnel).
+show ip eigrp neighbors                           Confirms the EIGRP neighbor
+                                                  relationship formed over the
+                                                  Tunnel0 interface.
+ping <ip>                                          Verify reachability at each
+                                                  stage (tunnel address,
+                                                  then full end-to-end PC-to-
+                                                  PC).
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Created a GRE tunnel (Tunnel0) on both R1 and R2, addressed from the
+  shared 192.168.1.0/30 network, each with `tunnel source` pointing to
+  its own real S0/0/0 interface and `tunnel destination` pointing to
+  the OTHER router's real S0/0/0 address.
+✓ Diagnosed and fixed a missing prerequisite: without a route to the
+  other router's real tunnel-destination address, the tunnel can never
+  come up — fixed with a static default route on each router pointing
+  toward its own service provider.
+✓ Verified the tunnel came up (`show ip interface brief`, `show
+  interface tunnel 0` confirming GRE/IP encapsulation) and a successful
+  ping across it.
+✓ Configured EIGRP AS 100 on both routers, advertising each internal
+  LAN plus the tunnel network itself, and confirmed R1 and R2 formed an
+  EIGRP neighbor relationship directly over the Tunnel0 interface.
+✓ Verified full end-to-end reachability from PC2 to PC1, across R2, the
+  GRE tunnel, and R1.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• GRE (Generic Routing Encapsulation) — a tunneling protocol that
+  encapsulates one IP packet inside another, creating a virtual
+  point-to-point link between two routers that aren't directly
+  connected, as long as each can reach the other's real IP address
+  across whatever network sits in between.
+• Tunnel interface — a purely logical interface (`interface tunnel
+  <n>`), addressed independently of any physical interface, that
+  represents the virtual link the GRE tunnel creates.
+• `tunnel source` / `tunnel destination` — configure which REAL
+  (physical, underlying) interface/address the tunnel's encapsulated
+  traffic is actually sent from and to; these are the router's genuine,
+  routable addresses — NOT the tunnel's own logical addresses (like
+  192.168.1.1/192.168.1.2 in this lab).
+• Underlying reachability is a hard prerequisite for a GRE tunnel — the
+  tunnel interfaces themselves being correctly configured is not
+  enough; each router must also have an actual route (static or
+  dynamic) to the OTHER router's real tunnel-destination address, or
+  the encapsulated GRE traffic has nowhere to go and the tunnel never
+  comes up.
+• Running a routing protocol (here, EIGRP) over a GRE tunnel — a tunnel
+  interface can be included in an EIGRP `network` statement exactly
+  like any other interface, allowing two routers to form a neighbor
+  relationship and exchange routes directly across the virtual tunnel
+  link, even though the underlying physical path may cross an entirely
+  different, otherwise-unrelated network (here, the service provider
+  network).
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured a GRE tunnel between R1 and R2 (Tunnel0,
+192.168.1.0/30, tunnel source/destination pointing at each router's
+real S0/0/0 address), fixed a missing static default route on each
+router that was initially preventing the tunnel from coming up, and
+confirmed the tunnel's operation via a successful ping and `show
+interface tunnel 0` (GRE/IP encapsulation). Configured EIGRP AS 100
+over both the internal LANs and the tunnel network itself, confirmed
+R1 and R2 formed an EIGRP neighbor relationship directly across the
+tunnel, and verified full end-to-end reachability from PC2 to PC1.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Tunnel source/destination vs. tunnel interface addresses
+  Two completely separate addressing layers on the same tunnel — easy
+  to conflate at first.
+  Exam: know precisely which address goes where — `tunnel source`/
+  `tunnel destination` use each router's REAL, routable interface
+  addresses (what the underlying network actually routes on), while the
+  `ip address` on the tunnel interface itself is an entirely separate,
+  virtual addressing scheme (192.168.1.0/30 here) used only for traffic
+  riding inside the tunnel.
+  Real world: this separation is exactly what makes GRE tunnels useful
+  for connecting sites across the public Internet or an MPLS provider
+  network — the tunnel's own internal addressing scheme can be
+  whatever the organization wants, completely independent of the
+  provider's addressing in between.
+
+Underlying route to the tunnel destination is a hard prerequisite
+  A perfectly configured tunnel interface still won't come up without
+  it.
+  Exam: expect a scenario question where tunnel configuration "looks
+  complete" and is still down — check for a missing route to the
+  tunnel destination address specifically, exactly as demonstrated in
+  this lab.
+  Real world: this is one of the most common real-world GRE
+  troubleshooting steps — before questioning the tunnel configuration
+  itself, confirm with a plain `ping <tunnel-destination-real-address>`
+  that basic IP reachability to the far router even exists at all.
+
+Routing protocol adjacency over a tunnel interface
+  A tunnel interface participates in routing protocols exactly like any
+  other interface, letting routers become neighbors "directly" despite
+  a physically indirect path.
+  Exam: know that GRE tunnels are commonly used specifically to enable
+  a dynamic routing protocol between sites that otherwise have no
+  direct link — this lab's EIGRP-over-tunnel setup is the canonical
+  example.
+  Real world: this is a widely-used real-world design pattern — GRE
+  tunnels over the Internet (often combined with IPsec for encryption,
+  not covered in this lab) commonly link branch offices, letting a
+  single routing protocol run cleanly across an otherwise untrusted or
+  topologically indirect underlying network.
+
+==================================================
+END OF LAB
+==================================================

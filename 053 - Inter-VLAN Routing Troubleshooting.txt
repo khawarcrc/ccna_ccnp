@@ -1,0 +1,285 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 053 - InterVLAN Routing Troubleshooting
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Troubleshoot three deliberately-introduced misconfigurations — one per
+device — across the two independent small networks configured in Lab
+052 (InterVLAN Routing: SVI, Router on a Stick): a PC access port
+assigned to the wrong (unused) VLAN on SW1, a wrong subnet on one of
+R2's router-on-a-stick subinterfaces, and SW2's uplink to R2 left as an
+access port instead of a trunk.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same two independent networks as Lab 052 — see
+[intervlan_routing_svi_router_on_a_stick.txt](intervlan_routing_svi_router_on_a_stick.txt)
+for the full diagram and IP addressing table: Network A (PC1/VLAN10,
+PC2/VLAN20, SVI-routed on SW1, no router) and Network B (PC3/VLAN30,
+PC4/VLAN40, routed via SW2's trunk to R2's router-on-a-stick
+subinterfaces). Nothing physically changed — one configuration line
+per device (SW1, R2, SW2) was altered to introduce the faults below.
+
+==================================================
+PROBLEM 1 - NETWORK A: PC1's PORT ASSIGNED TO THE WRONG VLAN (SW1)
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC1 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.2.10        Fails — PC1 (VLAN 10) cannot reach PC2 (VLAN 20).
+
+---------------- SW1 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip interface brief     The VLAN 10 and VLAN 20 SVIs both show the correct IP
+                            addresses — ruling out an SVI addressing problem.
+show vlan brief              Reveals the actual fault: FastEthernet0/1, the port
+                             PC1 connects to, has been placed in VLAN 11 — a VLAN
+                             that isn't part of this network's design at all —
+                             instead of VLAN 10.
+
+---------------- Fix ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface FastEthernet0/1
+ switchport access vlan 10           Moves PC1's port to the correct VLAN (10).
+exit
+no vlan 11                          Deletes the erroneous VLAN 11 entirely, since
+                                    it isn't used anywhere in this network.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show vlan brief              Confirms VLAN 11 is gone and F0/1 now correctly shows
+                             under VLAN 10.
+ping 10.0.2.10 (from PC1)     Succeeds — Network A's inter-VLAN routing is fully
+                             restored.
+
+==================================================
+PROBLEM 2 - NETWORK B: WRONG SUBNET ON R2's G0/0.30 SUBINTERFACE
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC3 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.4.10        Fails — PC3 (VLAN 30) cannot reach PC4 (VLAN 40).
+
+The lab's instructions indicate there is exactly one fault on R2 and
+one on SW2 — R2 is checked first.
+
+---------------- R2 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show running-config          G0/0 itself is up (not shutdown), and both
+                             subinterfaces exist with the correct
+                             `encapsulation dot1Q` VLAN tags (30 and 40) — ruling
+                             out the interface-down or wrong-VLAN-tag
+                             possibilities. However, the IP address on the
+                             G0/0.30 subinterface is on the wrong subnet
+                             entirely — VLAN 30's subnet is supposed to be
+                             10.0.3.0/24, and the configured address doesn't
+                             match it.
+
+---------------- Fix ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/0.30
+ ip address 10.0.3.1 255.255.255.0       Corrects the subinterface to the proper
+                                        VLAN 30 subnet and gateway address.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show ip interface brief      Confirms G0/0.30 now shows the correct address,
+ (on R2)                    10.0.3.1.
+
+==================================================
+PROBLEM 3 - NETWORK B: SW2's UPLINK TO R2 LEFT AS ACCESS INSTEAD OF TRUNK
+==================================================
+
+Fixing R2 alone isn't enough — the lab instructions indicated a second,
+separate fault on SW2.
+
+---------------- Diagnose (SW2) ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show vlan brief              F0/1 (PC3) and F0/2 (PC4) are correctly in VLAN 30
+                             and VLAN 40 respectively.
+show interfaces trunk        Nothing appears at all — no trunk is currently
+                             active on SW2, even though G0/1 (the uplink to R2)
+                             is supposed to be one.
+show run                     Confirms G0/1 is configured as an access port —
+                             consistent with it appearing under VLAN 1 in the
+                             earlier `show vlan brief` output, rather than not
+                             appearing in that listing at all (as an active trunk
+                             port normally would). An access-mode uplink to R2
+                             can't carry both VLAN 30 and VLAN 40 traffic the way
+                             router-on-a-stick requires.
+
+---------------- Fix ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1
+ switchport mode trunk                   Corrects G0/1 to trunk mode, allowing it
+                                        to carry both VLAN 30 and VLAN 40 to R2.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show interfaces trunk        Confirms G0/1 is now an active trunk.
+show vlan brief               Confirms G0/1 no longer appears listed under
+                             VLAN 1.
+ping 10.0.4.10 (from PC3)     Succeeds — Network B's inter-VLAN routing is fully
+                             restored, now that both the R2 subinterface address
+                             and SW2's trunk are corrected.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip interface brief                           Confirms SVI/subinterface IP
+                                                  addresses and up/down state.
+show vlan brief                                   Confirms VLAN existence and
+                                                  correct access-port assignment
+                                                  — and reveals a port stuck in
+                                                  the wrong VLAN (including the
+                                                  default VLAN 1, for a port that
+                                                  should be a trunk).
+show interfaces trunk                             Confirms which ports are
+                                                  actually active trunks —  an
+                                                  empty result here immediately
+                                                  points at a missing trunk
+                                                  configuration.
+show running-config                               General-purpose command for
+                                                  spotting a wrong VLAN, wrong
+                                                  subnet, or wrong switchport mode.
+ping <destination>                                 Verify inter-VLAN reachability
+                                                  after each fix.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed PC1's port (F0/1) on SW1 assigned to an unused VLAN
+  11 instead of VLAN 10, and deleted the erroneous VLAN 11 — restoring
+  Network A's SVI-based inter-VLAN routing.
+✓ Found and fixed R2's G0/0.30 subinterface configured with the wrong
+  subnet, correcting it to 10.0.3.1/24.
+✓ Found and fixed SW2's G0/1 uplink to R2 left in access mode (VLAN 1)
+  instead of trunk mode — required for router-on-a-stick to carry both
+  VLAN 30 and VLAN 40 — restoring Network B's inter-VLAN routing.
+✓ Verified all four PCs (PC1-PC4) could successfully ping across their
+  respective VLAN pairs after all three fixes.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• A port in the wrong (even unused/orphan) VLAN — SW1's F0/1 being in
+  VLAN 11 rather than VLAN 10 shows that a misassigned access port
+  doesn't have to land in an otherwise-meaningful VLAN to break
+  connectivity; even an unused VLAN created by mistake is enough, and
+  `show vlan brief` is the fastest way to spot it.
+• Correct VLAN tag but wrong IP subnet on a router-on-a-stick
+  subinterface — R2's G0/0.30 having the right `encapsulation dot1Q 30`
+  but the wrong IP address demonstrates these are two entirely
+  independent settings on the same subinterface; one being correct says
+  nothing about the other.
+• A trunk link stuck in access mode is visible two ways — it shows up
+  under a VLAN (typically the default VLAN 1) in `show vlan brief`
+  instead of not appearing there at all, AND it's simply absent from
+  `show interfaces trunk` output — either command alone is enough to
+  catch this fault.
+• Multi-device root-cause distribution — this lab reinforces the same
+  lesson as the ICND1 review troubleshooting labs: "one misconfiguration
+  per device" style labs require checking every device in the affected
+  path (here, R2 AND SW2 both needed fixes before Network B worked
+  again) rather than assuming a single fix resolves the whole network.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed three independent misconfigurations
+across the two networks from Lab 052: SW1's F0/1 assigned to an unused
+VLAN 11 instead of VLAN 10 (Network A), R2's G0/0.30 subinterface
+configured with the wrong IP subnet instead of 10.0.3.0/24 (Network B),
+and SW2's G0/1 uplink to R2 left as an access port instead of a trunk
+(also Network B). All four PCs could successfully ping across their
+respective VLANs after all fixes were applied.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Access port in an unused/orphan VLAN
+  Functionally identical in effect to being in any other wrong VLAN —
+  the specific VLAN number doesn't matter, only that it isn't the
+  correct one.
+  Exam: don't assume a misconfigured VLAN number has to be a
+  "meaningful" one from the topology — always cross-check `show vlan
+  brief` against the actual intended design, not just against VLANs
+  that "make sense."
+  Real world: a stray/orphan VLAN like this (VLAN 11, unused anywhere
+  else) is also a minor security/hygiene issue on its own even once a
+  port is moved off it — cleaning it up with `no vlan <id>`, as done
+  here, is good practice, not just cosmetic.
+
+Correct VLAN tag, wrong subnet, on the same subinterface
+  Two independent configuration values on one logical interface — one
+  can be right while the other is wrong.
+  Exam: expect a scenario question that shows a subinterface's
+  `encapsulation dot1Q` correctly tagged to test whether you'll
+  correctly conclude the fault must be elsewhere (the IP address)
+  rather than assuming a matching VLAN tag guarantees the whole
+  subinterface is correctly configured.
+  Real world: this exact class of partial-misconfiguration (right VLAN,
+  wrong subnet) commonly happens from a copy-paste error when building
+  multiple subinterfaces from a template — copying the VLAN tag
+  correctly but forgetting to update the IP address to match.
+
+Trunk link stuck in access mode, visible in two different commands
+  `show vlan brief` (appears under a VLAN) and `show interfaces trunk`
+  (doesn't appear at all) both independently reveal the same fault.
+  Exam: know both symptoms so you can recognize the fault regardless of
+  which command a question happens to show you output from.
+  Real world: `show interfaces trunk` returning genuinely empty output
+  (not an error, just nothing listed) is one of the fastest possible
+  checks when an inter-VLAN or trunk-dependent path "just isn't
+  working" — it immediately rules in or out "is there even an active
+  trunk here at all" before digging into anything more specific.
+
+==================================================
+END OF LAB
+==================================================

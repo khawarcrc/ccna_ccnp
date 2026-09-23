@@ -1,0 +1,357 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 067 - BGP
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure eBGP (external BGP) for single-homed branch/Internet
+connectivity — the extent of BGP required on the CCNA (deeper BGP
+topics belong to CCNP or the service-provider certification track).
+Unlike RIP, EIGRP, and OSPF (all IGPs — Interior Gateway Protocols,
+used for routing within one organization), BGP is an EGP (Exterior
+Gateway Protocol), used for routing BETWEEN organizations — in this
+case, between the organization's own Autonomous System (AS 65000) and
+its Internet Service Provider (AS 65001). Configure a BGP peering
+between R1 and SPR1, advertise the organization's internal networks
+(including a summarized route built using a "null0 discard route" trick
+specifically to satisfy BGP's exact-route-match requirement), and
+verify an internal host can reach an external server.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                                          AS 65001 (ISP)
+                                        +---------+
+                                        |  SPR1   |-------- (Internet) -------- Server
+                                        +----+----+                          15.0.0.1
+                                             | eBGP peering
+                            10.0.0.1 (SPR1)  | (R1 <-> SPR1)
+                                             | 10.0.0.2 (R1)
+  AS 65000 (this organization)         +----+----+
+                                        |   R1    |   BGP AS 65000, RID/loopback 1.1.1.1/32
+                                        +----+----+
+                                        10.12.0.0/30 |  10.30.0.0/30 (R1-R3, part of the
+                                             |         |   internal OSPF triangle)
+                            +----------------+         |
+                            |                           |
+                       +----+----+   10.23.0.0/30   +---+-----+
+                       |   R2    |------------------|   R3    |
+                       +---------+                  +---------+
+                       loopback 2.2.2.2/32           loopback 3.3.3.3/32
+
+R1, R2, and R3 form the internal network (AS 65000), connected in a
+triangle by three /30 transit links (10.12.0.0/30 between R1-R2,
+10.23.0.0/30 between R2-R3, 10.30.0.0/30 between R3-R1) and running
+OSPF internally (R1 already originates a default route into OSPF via
+`default-information originate`, from an earlier lab, giving R2 and R3
+a path to the Internet through R1). R1 alone is the BGP-speaking border
+router, peering externally (eBGP) with SPR1 — the ISP's router, in a
+completely separate AS (65001). Each of R1, R2, and R3 has its own
+loopback (1.1.1.1/32, 2.2.2.2/32, 3.3.3.3/32 respectively).
+
+==================================================
+STEP 1 - CONFIRM THE PROBLEM (BEFORE BGP IS CONFIGURED)
+==================================================
+
+---------------- R2 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip route            Shows various OSPF-learned internal routes, plus a
+                         default route toward the Internet (learned via R1's
+                         earlier `default-information originate` in OSPF).
+ping 15.0.0.1              Fails, DESPITE R2 having a route out to the Internet.
+                         The reason: R1 hasn't advertised the organization's
+                         internal networks to the ISP yet, so return traffic
+                         from the external server has no path back into AS
+                         65000 at all — the outbound path exists, but the
+                         return path doesn't.
+
+==================================================
+STEP 2 - CONFIGURE THE eBGP NEIGHBOR RELATIONSHIP (R1)
+==================================================
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router bgp 65000                            Enters BGP configuration mode for
+                                            this organization's AS number, 65000.
+                                            Unlike an OSPF process ID, a BGP AS
+                                            number is NOT locally insignificant —
+                                            it's your organization's actual,
+                                            real-world-assigned identity on the
+                                            Internet, so accuracy here matters a
+                                            great deal.
+ neighbor 10.0.0.1 remote-as 65001            Unlike OSPF/EIGRP, which discover
+                                            neighbors dynamically via multicast
+                                            hellos sent out enabled interfaces,
+                                            BGP neighbors must be manually
+                                            specified — a TCP connection is then
+                                            established to that specific address
+                                            to form the peering. `remote-as`
+                                            specifies the NEIGHBOR's AS number
+                                            (65001, SPR1/the ISP) — since it
+                                            differs from R1's own AS (65000),
+                                            this is specifically an EXTERNAL BGP
+                                            (eBGP) peering.
+
+==================================================
+STEP 3 - ADVERTISE THE LOOPBACK NETWORKS INTO BGP
+==================================================
+
+BGP's `network` command works fundamentally differently from OSPF's or
+EIGRP's: rather than identifying which INTERFACES to activate the
+protocol on, BGP's `network` command must specify the EXACT network
+address and mask to advertise, and a matching route for that exact
+network/mask must already exist in the routing table — otherwise
+nothing is advertised, with no error given.
+
+---------------- R1 ----------------
+
+Command                                            Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route                                        Confirms R1 has routes to
+                                                    1.1.1.1/32, 2.2.2.2/32, and
+                                                    3.3.3.3/32 (its own loopback
+                                                    plus R2's and R3's, learned
+                                                    via internal OSPF) — all
+                                                    eligible to advertise since
+                                                    exact matches exist.
+router bgp 65000
+ network 1.1.1.1 mask 255.255.255.255                Advertises R1's own loopback.
+                                                    Unlike EIGRP/OSPF's wildcard
+                                                    mask, BGP's `network` command
+                                                    uses a REGULAR subnet mask —
+                                                    here, an exact /32 match,
+                                                    since that's the exact
+                                                    prefix present in the routing
+                                                    table.
+ network 2.2.2.2 mask 255.255.255.255                Advertises R2's loopback
+                                                    (learned via OSPF, but still
+                                                    advertisable into BGP from
+                                                    R1 as the border router).
+ network 3.3.3.3 mask 255.255.255.255                Advertises R3's loopback.
+
+Attempting a broader mask (e.g. advertising 1.0.0.0/8 instead of the
+exact 1.1.1.1/32) would NOT work — BGP requires the exact network/mask
+combination to already exist as a route.
+
+==================================================
+STEP 4 - ADVERTISE A SUMMARY OF THE INTERNAL TRANSIT NETWORKS
+==================================================
+
+The next task is to advertise a single summarized 10.0.0.0/16 route
+covering the three /30 transit networks (10.12.0.0/30, 10.23.0.0/30,
+10.30.0.0/30) — but since BGP requires an EXACT matching route in the
+table, and no 10.0.0.0/16 route naturally exists (only the individual
+/30s do), simply typing the `network` command for it fails silently.
+
+---------------- R1 ----------------
+
+Command                                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route                                No 10.0.0.0/16 route exists in the
+                                            table — only the individual /30
+                                            transit networks.
+router bgp 65000
+ network 10.0.0.0 mask 255.255.0.0            Entered anyway, but doesn't
+                                            actually advertise anything yet —
+                                            no matching route exists.
+exit
+ip route 10.0.0.0 255.255.0.0 Null0          The fix: manually creates a static
+                                            route for exactly 10.0.0.0/16,
+                                            pointed at the Null0 interface — a
+                                            special interface that silently
+                                            discards anything routed to it.
+                                            This is done purely so a matching
+                                            10.0.0.0/16 entry EXISTS in the
+                                            routing table, satisfying BGP's
+                                            exact-match requirement — not
+                                            because R1 actually wants to route
+                                            real traffic to Null0 under normal
+                                            circumstances.
+show ip route                                Confirms the new 10.0.0.0/16 route
+                                            is present alongside the three
+                                            more-specific /30 routes. Because
+                                            IP routing always prefers the
+                                            longest (most specific) matching
+                                            prefix, real traffic destined for
+                                            the three actual /30 transit
+                                            networks still correctly routes out
+                                            their normal interfaces — the
+                                            Null0 route only catches traffic for
+                                            addresses WITHIN 10.0.0.0/16 that
+                                            AREN'T covered by any more-specific
+                                            route (i.e., addresses that don't
+                                            actually exist in this network),
+                                            silently discarding it rather than
+                                            letting it leak out unpredictably.
+
+This technique — creating a static route to Null0 purely to satisfy a
+summarization/advertisement requirement — is commonly called a
+**discard route**.
+
+==================================================
+STEP 5 - VERIFY END-TO-END REACHABILITY
+==================================================
+
+With 10.0.0.0/16 now present in R1's routing table (and therefore
+advertised into BGP toward SPR1), the ISP — and therefore the external
+server — now has a return path back into AS 65000.
+
+---------------- R2 ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 15.0.0.1             Succeeds — the external server's reply now has a valid
+                         return path via the newly-advertised 10.0.0.0/16
+                         summary.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip bgp summary                              Shows BGP neighbor state and
+                                                  basic peering status.
+show ip bgp neighbors                             Detailed BGP neighbor
+                                                  information, including AS
+                                                  numbers and session state.
+show ip route                                    Confirms both the individual
+                                                  and summarized routes, plus
+                                                  BGP-learned routes from SPR1
+                                                  (marked "B").
+show ip route bgp                                 Filters the routing table to
+                                                  BGP-learned routes only.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Confirmed the initial problem: R2 could reach the Internet outbound
+  (via R1's OSPF-originated default route) but pings to an external
+  server failed, since R1 hadn't yet advertised any internal networks
+  back to the ISP for a return path to exist.
+✓ Configured an eBGP neighbor relationship on R1 (`router bgp 65000`,
+  `neighbor 10.0.0.1 remote-as 65001`) toward SPR1 in the ISP's
+  separate AS.
+✓ Advertised R1, R2, and R3's individual /32 loopback networks into
+  BGP using exact `network <address> mask <exact-mask>` statements,
+  each matching an existing routing-table entry.
+✓ Attempted to advertise a 10.0.0.0/16 summary of the three internal
+  transit networks, discovered it silently failed due to no matching
+  route existing, and fixed it by creating a static discard route
+  (`ip route 10.0.0.0 255.255.0.0 Null0`) purely to satisfy BGP's
+  exact-match requirement.
+✓ Verified the fix restored end-to-end reachability — R2 could
+  successfully ping the external server once R1's summary route was
+  actually being advertised.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• IGP vs. EGP — Interior Gateway Protocols (RIP, EIGRP, OSPF) route
+  within a single organization/Autonomous System; Exterior Gateway
+  Protocols (BGP, the only one in real modern use) route BETWEEN
+  different Autonomous Systems/organizations — a fundamentally
+  different scope and purpose.
+• eBGP (external BGP) — a BGP peering between routers in two DIFFERENT
+  Autonomous Systems (here, AS 65000 and AS 65001) — as opposed to iBGP
+  (internal BGP, between routers in the SAME AS), which isn't covered
+  in this lab.
+• BGP neighbors must be manually configured — unlike IGPs, which
+  discover neighbors dynamically via multicast hellos on enabled
+  interfaces, BGP requires an explicit `neighbor <ip> remote-as <as>`
+  command, after which a TCP connection is established to form the
+  peering.
+• BGP AS numbers matter a great deal, unlike an OSPF process ID — both
+  your own AS number (in `router bgp <as>`) and every configured
+  neighbor's AS number must be entered correctly, since these
+  represent real organizational identities on the Internet, not
+  arbitrary local labels.
+• BGP's `network` command requires an EXACT match — unlike OSPF/EIGRP's
+  `network` command (which activates the protocol on matching
+  interfaces and advertises their actual configured prefix), BGP's
+  `network <address> mask <mask>` command only advertises something if
+  a route for that EXACT network and mask already exists in the
+  routing table — using a regular subnet mask, not a wildcard mask.
+• Discard route (static route to Null0) — a technique for creating an
+  exact routing-table entry purely to satisfy a summarization/
+  advertisement requirement (as used here for BGP), without intending
+  for real traffic to actually be routed there under normal
+  circumstances; because IP routing always prefers the most specific
+  matching route, more-specific real routes still take priority, and
+  the discard route only catches traffic for addresses within the
+  summarized range that don't actually exist anywhere in the real
+  network.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured an eBGP peering between R1 (AS 65000) and SPR1
+(AS 65001), advertised R1/R2/R3's individual loopback networks using
+exact-match BGP `network` statements, and advertised a 10.0.0.0/16
+summary of the internal transit networks using a Null0 discard route
+specifically to satisfy BGP's exact-route-match requirement. Confirmed
+the fix by successfully pinging an external server (15.0.0.1) from R2,
+which had failed before R1's internal networks were advertised to the
+ISP.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+BGP's exact-match `network` command requirement
+  A fundamentally different behavior from every IGP's `network`
+  command covered earlier in this series.
+  Exam: memorize this distinction precisely — BGP will NOT advertise a
+  summarized or broader network unless that EXACT prefix/mask already
+  exists as a route in the table; this is one of the most commonly
+  tested BGP "gotchas" on the exam.
+  Real world: this exact-match requirement is exactly why discard
+  (Null0) routes are a standard, widely-used real-world technique for
+  BGP summarization — not a lab-only trick.
+
+Discard route (`ip route <summary> <mask> Null0`)
+  Creates a matching route purely to enable advertisement, while real
+  traffic still prefers more-specific routes.
+  Exam: know the specific purpose and mechanism — it's not "blocking"
+  traffic in general, it's ensuring unmatched-but-in-range traffic
+  (addresses that don't actually exist) gets discarded rather than
+  potentially misrouted, while genuinely existing more-specific
+  networks are entirely unaffected due to longest-prefix-match routing.
+  Real world: this is standard practice at real BGP-speaking network
+  edges — an organization summarizing its advertised address block
+  while only using part of it internally routes the "gaps" to Null0,
+  preventing that unused space from being silently blackholed
+  elsewhere or causing routing confusion.
+
+BGP AS numbers as real, significant identities
+  Unlike OSPF's locally-significant process ID, a BGP AS number is a
+  genuine, often publicly registered identity.
+  Exam: expect emphasis on getting AS numbers exactly right in both
+  `router bgp <as>` and every `neighbor ... remote-as <as>` command —
+  a typo here doesn't just fail to form a neighbor relationship
+  cleanly, it represents a fundamentally different (and potentially
+  externally-visible, in a real deployment) organizational identity.
+  Real world: real AS numbers are assigned by regional Internet
+  registries and are a core part of how the global Internet's routing
+  actually works — getting them right isn't just a lab exercise, a
+  real misconfigured AS number can cause genuine routing problems
+  visible to the wider Internet.
+
+==================================================
+END OF LAB
+==================================================

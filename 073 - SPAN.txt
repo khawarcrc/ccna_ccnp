@@ -1,0 +1,262 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 073 - SPAN
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure SPAN (Switched Port Analyzer), which copies traffic from a
+source interface to a destination interface — typically leading to a
+monitoring server — so that traffic passing through the source
+interface can be captured and analyzed without disrupting it. Configure
+local SPAN on SW1 to monitor both directions of traffic on its G0/1
+interface and copy it to Server1. Packet Tracer has no real monitoring
+server, so this lab instead uses Packet Tracer's Simulation Mode to
+visually confirm the SPAN configuration is actually duplicating
+traffic.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  +------+                                                          +------+
+  | PC1  |                                                          | PC2  |
+  +--+---+                                                          +--+---+
+     |                                                                  |
+  +--+---+   G0/1                                          G0/1  +---+--+
+  | SW1  |-----------+                                  +---------| SW2  |
+  +--+---+            \                                /          +------+
+     | G0/2             \                              /
+  +--+------+             +------+              +------+
+  | Server1 |             |  R1  |--------------|  R2  |
+  +---------+             +------+              +------+
+  (SPAN destination,
+   G0/2 on SW1)
+
+  SW1's G0/1 = SPAN SOURCE (monitors both directions of PC1<->PC2 traffic
+               as it passes through SW1 toward R1)
+  SW1's G0/2 = SPAN DESTINATION (copies go here, to Server1)
+
+PC1 connects to SW1, PC2 connects to SW2, and R1/R2 route between them
+(this lab reuses a simple existing routed topology from earlier in the
+series — PC1 and PC2 are on different subnets, reached via R1 and R2).
+Server1 connects to SW1's G0/2 and plays the role of a traffic
+monitoring/capture server — SPAN is configured to copy everything
+passing through SW1's G0/1 (the interface facing R1, which is how PC1's
+traffic to/from PC2 actually flows through SW1) to Server1's port.
+
+==================================================
+STEP 1 - CONFIRM CONNECTIVITY AND OBSERVE NORMAL TRAFFIC FLOW (SIMULATION MODE)
+==================================================
+
+---------------- PC2 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.1.10        The FIRST ping fails — a common occurrence in these labs,
+                      caused by the ARP process (learning the default gateway's
+                      MAC address) not completing before the ping itself times
+                      out. Every ping AFTER the first succeeds normally, once
+                      ARP has resolved.
+
+Switching to Packet Tracer's **Simulation Mode** (bottom-right of the
+application) allows tracing exactly which devices a packet passes
+through, step by step, rather than just seeing pass/fail results.
+
+---------------- PC2 (in Simulation Mode) ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.1.10        Stepping through the simulation shows the ICMP packet's
+                      exact path: PC2 -> SW2 -> R2 -> R1 -> SW1 -> PC1, then the
+                      reply travels the reverse path back: PC1 -> SW1 -> R1 ->
+                      R2 -> SW2 -> PC2. Continuing to step through also reveals
+                      other background traffic on the network (STP BPDUs from
+                      the switches, EIGRP hello packets between the routers).
+                      Confirmed: at this point, BEFORE SPAN is configured, no
+                      copies of the ICMP traffic are sent to Server1 at all —
+                      only the direct PC2-to-PC1 path is used.
+
+==================================================
+STEP 2 - CONFIGURE LOCAL SPAN ON SW1
+==================================================
+
+SPAN comes in multiple types, but the CCNA only requires local SPAN —
+copying traffic from one interface to another on the SAME switch.
+
+---------------- SW1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+monitor session 1 source interface         SPAN is configured entirely from
+ GigabitEthernet0/1 both                     global configuration mode — no
+                                            interface-level commands are needed
+                                            at all. `monitor session <n>` starts
+                                            (or references) a SPAN session,
+                                            numbered so multiple independent SPAN
+                                            sessions could exist on the same
+                                            switch. `source interface G0/1`
+                                            specifies which interface's traffic
+                                            to copy. `both` monitors traffic in
+                                            BOTH directions — incoming (`rx`) and
+                                            outgoing (`tx`) — either of which
+                                            could instead be specified alone if
+                                            only one direction were needed.
+monitor session 1 destination interface     Specifies where the copied traffic
+ GigabitEthernet0/2                          is sent — G0/2, the interface
+                                            connected to Server1. Source and
+                                            destination can be configured in
+                                            either order; it doesn't matter which
+                                            comes first.
+
+That's the entire configuration — SPAN is deliberately simple to set
+up.
+
+==================================================
+STEP 3 - VERIFY SPAN IS DUPLICATING TRAFFIC (SIMULATION MODE)
+==================================================
+
+---------------- PC2 (in Simulation Mode) ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.1.10        Stepping through the simulation again: the ICMP request
+                      travels PC2 -> SW2 -> R2 -> R1 -> SW1 — but this time,
+                      once it reaches SW1, it is sent to BOTH PC1 AND Server1
+                      simultaneously, since SW1 copies traffic entering G0/1 (the
+                      `rx` half of `both`) out to G0/2 as well. Server1 shows a
+                      red X on the copied packet — since Packet Tracer's Server1
+                      isn't actually a real monitoring application, it simply
+                      discards the unexpected traffic; in a real deployment with
+                      genuine monitoring software, this wouldn't happen and the
+                      capture would be processed normally.
+                      Continuing: PC1 sends its reply back through SW1 toward
+                      R1 — this time SW1 copies the packet a second time as it
+                      EXITS G0/1 toward R1 (the `tx` half of `both`), again
+                      sending a copy to Server1.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show monitor session <n>                          Displays the SPAN session's
+                                                  configured source interface,
+                                                  destination interface, and
+                                                  monitored direction(s) (rx/
+                                                  tx/both).
+show running-config                               Verify the `monitor session`
+                                                  commands.
+(Packet Tracer Simulation Mode)                    Used throughout this lab in
+                                                  place of a real monitoring
+                                                  server, to visually confirm
+                                                  packets are actually being
+                                                  duplicated to the destination
+                                                  interface.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Confirmed normal PC2-to-PC1 traffic flow using Packet Tracer's
+  Simulation Mode, tracing the exact path (PC2-SW2-R2-R1-SW1-PC1 and
+  the return) before any SPAN configuration existed — confirming no
+  traffic reached Server1 at this stage.
+✓ Configured local SPAN on SW1 with a single pair of global
+  configuration commands: `monitor session 1 source interface G0/1
+  both` and `monitor session 1 destination interface G0/2`.
+✓ Re-verified using Simulation Mode with SPAN active, observing traffic
+  entering G0/1 being copied to Server1 (the `rx` half of `both`) and,
+  separately, the reply traffic exiting G0/1 also being copied (the
+  `tx` half) — confirming both directions were captured as intended.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• SPAN (Switched Port Analyzer) — copies traffic from a source
+  interface to a destination interface on the same switch (local SPAN)
+  or, in more advanced forms not required for the CCNA, across switches
+  — typically used to feed a network monitoring/analysis/capture tool
+  connected to the destination interface, without disrupting the
+  original traffic's normal path.
+• Local SPAN — the only SPAN type required for the CCNA: source and
+  destination interfaces are both on the SAME switch.
+• `monitor session <n> source interface <if> [rx | tx | both]` —
+  configures which interface's traffic to copy, and in which
+  direction(s): `rx` (incoming only), `tx` (outgoing only), or `both`.
+• `monitor session <n> destination interface <if>` — configures which
+  interface receives the copied traffic, typically connected to a
+  monitoring server or capture device.
+• SPAN configuration lives entirely in global configuration mode — no
+  interface-level SPAN-specific commands are needed on either the
+  source or destination interface itself.
+• Packet Tracer's Simulation Mode — a learning/verification tool
+  (separate from SPAN itself) that lets you step through a packet's
+  exact path hop-by-hop, useful here specifically because Packet Tracer
+  has no real monitoring server application to demonstrate SPAN's
+  actual purpose against.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured local SPAN on SW1, copying both incoming and
+outgoing traffic on G0/1 to Server1 on G0/2, using just two global
+configuration commands (`monitor session 1 source interface G0/1 both`
+and `monitor session 1 destination interface G0/2`). Verified the
+configuration using Packet Tracer's Simulation Mode, observing traffic
+between PC1 and PC2 being duplicated to Server1 in both directions as
+it passed through SW1's monitored interface.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+SPAN's simplicity as a configuration topic
+  Just two commands, entirely in global configuration mode — genuinely
+  one of the simpler CCNA configuration topics.
+  Exam: memorize the exact syntax pattern —
+  `monitor session <n> source interface <if> [rx|tx|both]` and
+  `monitor session <n> destination interface <if>` — since a full
+  working SPAN configuration is short enough to reasonably expect
+  verbatim recall.
+  Real world: SPAN is genuinely one of the most commonly used
+  troubleshooting/monitoring tools in real network operations —
+  feeding a packet capture tool (Wireshark, an IDS/IPS sensor, or a
+  dedicated monitoring appliance) connected to a SPAN destination port
+  is a routine, everyday task for network and security engineers alike.
+
+rx / tx / both direction choice
+  Determines exactly which half (or both halves) of a conversation get
+  copied.
+  Exam: know all three options and that `both` (used in this lab) is
+  simply the union of `rx` and `tx` — a scenario question might ask
+  which option to use for a specific one-directional monitoring
+  requirement.
+  Real world: choosing only `rx` or only `tx` instead of `both` is a
+  genuine, deliberate real-world choice sometimes made purely to
+  reduce the monitoring destination's bandwidth/processing load, when
+  only one direction of traffic is actually relevant to the
+  investigation at hand.
+
+SPAN's destination port and normal switching behavior
+  A SPAN destination port stops participating in normal switching while
+  it's a SPAN destination (a detail this lab doesn't explicitly dwell
+  on, but is a related, testable fact).
+  Exam: know that a port configured as a SPAN destination is dedicated
+  to receiving mirrored traffic and does not behave as a normal
+  switchport passing regular traffic while so configured.
+  Real world: this is exactly why a SPAN destination port is normally a
+  wired directly to a dedicated monitoring device, not shared with
+  another regular network host's connection.
+
+==================================================
+END OF LAB
+==================================================

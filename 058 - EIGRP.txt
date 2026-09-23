@@ -1,0 +1,404 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 058 - EIGRP
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure EIGRP (Enhanced Interior Gateway Routing Protocol) across the
+same five-router topology used in the OSPF labs, using a single,
+consistent Autonomous System (AS) number instead of OSPF's areas.
+Compare EIGRP's administrative distance and metric behavior against
+OSPF, then configure unequal-cost load balancing with the `variance`
+command (something OSPF cannot do — OSPF only supports equal-cost load
+balancing), and finish with manual route summarization using EIGRP's
+interface-level summarization command.
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same five-router physical topology as the OSPF labs (054-057) — see
+[ospf_part2_multi_area.txt](ospf_part2_multi_area.txt) for the base
+diagram: R4-R1-R2-R3-R5 in a line, with R1 central (connected to both
+R4 and R2). EIGRP has no concept of areas, so every router simply runs
+EIGRP AS 100 — there's no ABR-equivalent role here, just a flat routing
+domain across all five routers.
+
+  +--------+        +--------+        +--------+        +--------+        +--------+
+  |   R4   |--------|   R1   |--------|   R2   |--------|   R3   |--------|   R5   |
+  +--------+ 10.14. +--------+ 10.12. +--------+ 10.23. +--------+ 10.35. +--------+
+  RID 4.4.4.4  0.0/24  RID 1.1.1.1  0.0/24  RID 2.2.2.2  0.0/24  RID 3.3.3.3  0.0/24  RID 5.5.5.5
+                                                                    (EIGRP AS 100 everywhere)
+
+All five routers run EIGRP AS 100 (the AS number MUST match across the
+whole domain, unlike OSPF's locally-significant process ID). Loopback0
+on each router (1.1.1.1/24 through 5.5.5.5/24 — a /24 mask is used on
+these loopbacks in this lab, unlike the /32 loopbacks used in the OSPF
+labs) becomes each router's EIGRP router ID.
+
+==================================================
+STEP 1 - CONFIGURE A LOOPBACK ADDRESS ON EACH ROUTER
+==================================================
+
+The EIGRP router ID works identically to the OSPF router ID: manual
+configuration takes priority; otherwise the highest IP address on a
+loopback interface; otherwise the highest IP address on any other
+interface.
+
+---------------- R1 through R5 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+R1: interface Loopback0
+ ip address 1.1.1.1 255.255.255.0
+R2: interface Loopback0
+ ip address 2.2.2.2 255.255.255.0
+R3: interface Loopback0
+ ip address 3.3.3.3 255.255.255.0
+R4: interface Loopback0
+ ip address 4.4.4.4 255.255.255.0
+R5: interface Loopback0
+ ip address 5.5.5.5 255.255.255.0
+
+==================================================
+STEP 2 - CONFIGURE EIGRP ON EACH ROUTER
+==================================================
+
+EIGRP configuration is structurally similar to OSPF — a `router`
+command, then `network` statements — with one critical difference: the
+AS number after `router eigrp` MUST match on every router in the
+network, or they will not become EIGRP neighbors at all (unlike OSPF's
+process ID, which can differ freely). Like OSPF's `network` command,
+EIGRP's `network` command doesn't directly specify what to advertise —
+it identifies which interfaces to activate EIGRP on, and each activated
+interface then advertises its own actual configured network. Another
+EIGRP-specific behavior: if no mask is given at all, the `network`
+command defaults to the interface's classful network boundary.
+
+---------------- R1 ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+router eigrp 100                            Enters EIGRP configuration mode for
+                                            Autonomous System 100.
+ network 10.0.0.0                            No mask given — defaults to the
+                                            classful Class A boundary (10.0.0.0/8).
+                                            Both of R1's physical interfaces
+                                            (toward R4 and toward R2) fall within
+                                            this range, so this single line
+                                            activates EIGRP on both of them at
+                                            once.
+ network 1.1.1.1 0.0.0.0                     Activates EIGRP on the loopback, this
+                                            time using the exact wildcard mask
+                                            (matching only that single address).
+ passive-interface Loopback0                 Suppresses EIGRP advertisements on
+                                            the loopback — identical concept and
+                                            purpose to OSPF's passive-interface,
+                                            since the loopback doesn't lead
+                                            anywhere beyond the router itself.
+ no auto-summary                            Disables automatic summarization to
+                                            classful network boundaries. Whether
+                                            auto-summary defaults to on or off can
+                                            vary by IOS version/platform — on
+                                            these routers it defaults to ON — but
+                                            it should always be explicitly
+                                            disabled, with any summarization done
+                                            manually and only where intended.
+
+---------------- R2, R3, R4, R5 (same pattern on each) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+R2: router eigrp 100                        Same AS number (100) — required.
+ network 10.0.0.0
+ network 2.2.2.2 0.0.0.0
+ passive-interface Loopback0
+ no auto-summary
+
+R3: router eigrp 100
+ network 10.0.0.0
+ network 3.3.3.3 0.0.0.0
+ passive-interface Loopback0
+ no auto-summary
+
+R4: router eigrp 100
+ network 10.0.0.0
+ network 4.4.4.4 0.0.0.0
+ passive-interface Loopback0
+ no auto-summary
+
+R5: router eigrp 100
+ network 10.0.0.0
+ network 5.5.5.5 0.0.0.0
+ passive-interface Loopback0
+ no auto-summary
+
+==================================================
+STEP 3 - COMPARE EIGRP'S ADMINISTRATIVE DISTANCE AND METRIC TO OSPF
+==================================================
+
+---------------- R1 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip route            Routes learned via EIGRP are marked with a "D". Their
+                         administrative distance is shown as 90 — lower than
+                         OSPF's 110 — meaning if the same destination were
+                         learned via both EIGRP and OSPF, the EIGRP route would
+                         be preferred by default. EIGRP's metric numbers are also
+                         much larger and less immediately intuitive than OSPF's:
+                         R1's path to R5's loopback has a metric of 156672 via
+                         R4 (which includes one Gigabit Ethernet link), while the
+                         alternate path via R2 (entirely Fast Ethernet) has a
+                         higher metric.
+
+==================================================
+STEP 4 - CONFIGURE UNEQUAL-COST LOAD BALANCING (VARIANCE)
+==================================================
+
+OSPF can only load-balance across equal-cost paths. EIGRP can also load
+balance across UNEQUAL-cost paths — but only over paths that qualify as
+"feasible successors" (a specific EIGRP loop-prevention requirement,
+not something this lab explains in depth — a route only qualifies as a
+feasible successor if its reported/advertised distance is lower than
+the successor route's own feasible distance).
+
+---------------- R1 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip eigrp topology       Shows both the successor route (the current best
+                             path — here, to R5's loopback via R4/10.14.0.4, metric
+                             156672) and any feasible successor routes (backup
+                             paths meeting the feasible-successor requirement —
+                             here, via R2/10.12.0.2, metric 158976). A route that
+                             fails the feasible-successor requirement never
+                             appears in this table at all (`show ip eigrp
+                             topology all-links` would show every known path,
+                             feasible or not — though in this particular network,
+                             no such disqualified routes exist).
+
+configure terminal
+router eigrp 100
+ variance 2                    Allows EIGRP to load-balance across any feasible
+                              successor route whose metric is up to double
+                              (2x) the successor route's own metric — variance 3
+                              would allow up to triple, etc. Since the two
+                              metrics here (156672 vs. 158976) are fairly close,
+                              `variance 2` is more than enough to bring the
+                              second path into use.
+show ip route                  Both paths now appear in the routing table for
+                              both the R5 loopback (5.5.5.5) and the 10.35.0.0/24
+                              network — true unequal-cost load balancing.
+
+EIGRP will NEVER load balance across a path that isn't a feasible
+successor, no matter how high `variance` is set (up to its maximum of
+128) — this is a deliberate loop-prevention safeguard, not a tunable
+restriction that can be bypassed.
+
+==================================================
+STEP 5 - CONFIGURE MANUAL ROUTE SUMMARIZATION ON R3
+==================================================
+
+Unlike OSPF (where summarization is configured under `router ospf`
+mode, on an ABR), EIGRP summarization is configured directly at the
+INTERFACE level — specifically, on the interface facing the router(s)
+that should receive the summary.
+
+---------------- R3 ----------------
+
+Command                                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface GigabitEthernet0/1                            R3's interface facing R5 —
+                                                        the summary is configured
+                                                        here, on the interface the
+                                                        summary will be
+                                                        ADVERTISED OUT OF.
+ ip summary-address eigrp 100 10.0.0.0 255.0.0.0         Summarizes every route
+                                                        falling within
+                                                        10.0.0.0/8 into a single
+                                                        advertised route out this
+                                                        interface. As with OSPF's
+                                                        `area range` command, this
+                                                        uses a REGULAR subnet
+                                                        mask, not a wildcard mask
+                                                        (unlike the `network`
+                                                        command, which does use a
+                                                        wildcard).
+
+---------------- Verify (R5) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route            R5 now shows a single 10.0.0.0/8 summary route learned
+                         via EIGRP, instead of the individual separate subnet
+                         routes it previously received.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip eigrp neighbors                          Confirms EIGRP neighbor
+                                                  adjacencies.
+show ip route                                    Shows the routing table,
+                                                  including EIGRP-learned
+                                                  routes ("D") and their
+                                                  administrative distance/metric.
+show ip eigrp topology                            Shows successor and feasible
+                                                  successor routes with their
+                                                  feasible/reported distances —
+                                                  the basis for understanding
+                                                  variance-based load balancing.
+show ip protocols                                 Confirms the EIGRP AS number
+                                                  and configured networks.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Configured a /24 loopback (EIGRP router ID) on all five routers.
+✓ Enabled EIGRP AS 100 (a consistent AS number required across every
+  router, unlike OSPF's locally-significant process ID) on all five
+  routers, using the classful `network 10.0.0.0` shortcut for physical
+  interfaces plus an exact-wildcard `network` statement for each
+  loopback, `passive-interface Loopback0`, and `no auto-summary`
+  everywhere.
+✓ Compared EIGRP's administrative distance (90) against OSPF's (110)
+  and observed EIGRP's larger, less immediately intuitive metric
+  values.
+✓ Configured unequal-cost load balancing on R1 with `variance 2`,
+  enabling traffic to R5 to load-balance across both the successor
+  route (via R4) and a feasible successor route (via R2), despite their
+  different metrics — something OSPF cannot do at all.
+✓ Configured manual route summarization on R3's G0/1 interface with
+  `ip summary-address eigrp 100 10.0.0.0 255.0.0.0`, and confirmed R5
+  received a single 10.0.0.0/8 summary route instead of individual
+  subnet routes.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• EIGRP (Enhanced Interior Gateway Routing Protocol) — Cisco's enhanced
+  successor to the original IGRP; historically Cisco-proprietary but
+  since opened as a standard, though OSPF remains far more common in
+  real multi-vendor networks.
+• EIGRP AS (Autonomous System) number — unlike OSPF's locally-
+  significant process ID, the AS number in `router eigrp <as>` MUST
+  match exactly across every router in the EIGRP domain, or they will
+  not form neighbor relationships at all — a very common
+  troubleshooting/exam focus point.
+• EIGRP router ID — functions identically to OSPF's: manual
+  configuration takes precedence, otherwise the highest loopback IP
+  address, otherwise the highest IP address on any other interface.
+• EIGRP `network` command behavior — like OSPF's, it identifies which
+  interfaces to activate EIGRP on rather than directly specifying what
+  to advertise; uniquely, if no mask is given at all, it defaults to
+  the interface's classful network boundary (a shortcut with no direct
+  OSPF equivalent).
+• Administrative distance (AD) — EIGRP's internal AD is 90, lower
+  (more preferred) than OSPF's 110; when a router has learned routes to
+  the same destination via multiple protocols, the lower-AD route wins
+  by default, regardless of either protocol's own internal metric.
+• Successor and feasible successor — the successor is a destination's
+  current best route; a feasible successor is a qualifying backup route
+  (its reported/advertised distance must be lower than the successor's
+  own feasible distance) that EIGRP keeps ready without needing to
+  recompute the topology if the successor fails — and which
+  additionally becomes eligible for unequal-cost load balancing via
+  `variance`.
+• `variance <multiplier>` — allows EIGRP to load-balance traffic across
+  any feasible successor route whose metric is up to `<multiplier>`
+  times the successor route's metric; EIGRP will NEVER load-balance
+  across a non-feasible-successor path regardless of how high variance
+  is set (maximum 128) — a deliberate anti-loop safeguard.
+• `ip summary-address eigrp <as> <network> <mask>` — EIGRP's manual
+  summarization command, configured at the INTERFACE level (the
+  interface the summary is advertised out of), unlike OSPF's `area
+  range` (configured inside `router ospf` mode on an ABR); uses a
+  regular subnet mask, not a wildcard mask.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured EIGRP AS 100 across the same five-router
+topology used in the OSPF labs, using loopback-derived router IDs,
+`no auto-summary` on every router, and the classful `network`-command
+shortcut for physical interfaces. Compared EIGRP's administrative
+distance (90) and metric style against OSPF's, then configured
+`variance 2` on R1 to enable genuine unequal-cost load balancing across
+both its successor route (via R4) and feasible successor route (via
+R2) to R5 — something OSPF's equal-cost-only load balancing cannot do —
+and finished by configuring `ip summary-address eigrp 100 10.0.0.0
+255.0.0.0` on R3's G0/1, confirming R5 received one summarized
+10.0.0.0/8 route instead of individual subnet routes.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+EIGRP AS number mismatch
+  The single most common EIGRP neighbor-formation failure — and,
+  unlike OSPF's process ID, this one genuinely has to match.
+  Exam: expect this to be explicitly called out as a troubleshooting
+  scenario — "why aren't these EIGRP routers becoming neighbors" with
+  the answer being a mismatched AS number in the `router eigrp <as>`
+  command on one side.
+  Real world: this is exactly the kind of mistake that happens when
+  merging two previously-separate EIGRP networks (e.g. after a company
+  acquisition) — each side may have standardized on a different AS
+  number, and neighbor relationships simply won't form across the
+  boundary until reconciled.
+
+EIGRP administrative distance (90) vs. OSPF (110)
+  A lower AD always wins when the SAME destination is learned via
+  multiple protocols, independent of either protocol's own internal
+  metric calculation.
+  Exam: memorize the standard AD table (directly connected=0, static=1,
+  EIGRP=90, OSPF=110, RIP=120) — EIGRP's 90 vs. OSPF's 110 specifically
+  is a frequently tested pairing.
+  Real world: this is exactly why redistributing routes between EIGRP
+  and OSPF in the same network needs careful AD/route-map planning — if
+  a destination is genuinely reachable via both, a naive redistribution
+  can silently prefer whichever protocol has the lower AD, regardless
+  of which path is actually better.
+
+Unequal-cost load balancing via `variance`
+  A genuinely unique EIGRP capability compared to OSPF, which is
+  equal-cost only.
+  Exam: know EIGRP will NEVER load-balance over a non-feasible-successor
+  path even at maximum variance (128) — this is a very common exam
+  distinction, since it's tempting to assume variance alone controls
+  which paths are usable.
+  Real world: unequal-cost load balancing is genuinely useful in
+  networks with asymmetric link speeds where you still want to use a
+  slower backup link for some traffic rather than leaving it
+  completely idle — though it requires careful capacity planning, since
+  traffic proportion across the paths is weighted by their relative
+  metrics, not split evenly.
+
+`ip summary-address eigrp` at the interface level
+  A structurally different approach from OSPF's `area range` (which
+  lives inside the routing process configuration, on an ABR).
+  Exam: know EIGRP summarization is configured on the OUTBOUND
+  interface (the one facing the routers that should receive the
+  summary), not inside `router eigrp` mode — a common point of
+  confusion coming from OSPF's very different `area range` approach.
+  Real world: this interface-level model means the exact same EIGRP
+  process can advertise a summary out one interface while still sending
+  full, unsummarized routes out a different interface — useful when
+  only certain neighbors need the condensed view.
+
+==================================================
+END OF LAB
+==================================================

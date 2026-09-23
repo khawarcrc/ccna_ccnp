@@ -1,0 +1,378 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 076 - Review Troubleshooting Lab 3
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+The final lab in the series — troubleshoot three deliberately-
+introduced faults across the combined BGP/OSPF/EIGRP/GRE/PPP network
+from Lab 075 (Review Configuration Lab 3): a missing static default
+route on R2 (breaking both the GRE tunnel and OSPF adjacency to R1), an
+incorrect EIGRP wildcard mask on R3 (preventing an EIGRP neighbor
+relationship — and therefore return routes — to R4), and R3's PPP link
+to the ISP reverted to default HDLC encapsulation (breaking the eBGP
+session entirely).
+
+==================================================
+TOPOLOGY
+==================================================
+
+Same combined topology as Lab 075 — see
+[review_configuration_lab_3.txt](review_configuration_lab_3.txt) for
+the full diagram: Enterprise A (R1, R2 — static routes to the Internet,
+a GRE tunnel between them, OSPF area 0 over the LAN and tunnel
+interfaces) and Enterprise B (R3, R4 — EIGRP AS 100 internally, R3
+peering via eBGP with the ISP over a PPP/CHAP serial link). Nothing
+physically changed — three configuration problems were introduced,
+each on a different router.
+
+Note: R3's exact LAN-vs-transit interface addressing has some
+ambiguity in the source captions (this lab's own diagnosis explicitly
+identifies R3's relevant interface as 192.168.0.1) — the fault and fix
+themselves are unambiguous and reproduced precisely below; treat the
+specific subnet-to-interface mapping as approximate if cross-
+referencing against Lab 075's own addressing.
+
+==================================================
+PROBLEM 1 - R2: MISSING STATIC DEFAULT ROUTE (BREAKS TUNNEL + OSPF)
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC2 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 192.168.1.100           Fails — the reply comes back as "destination host
+                             unreachable," sent FROM PC2's own default gateway
+                             (R2) — suggesting R2 itself has no route to the
+                             destination network at all.
+
+---------------- R2 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip route             Confirms R2 only has local and directly-connected
+                         routes — the static default route to the Internet
+                         (configured in Lab 075) is missing entirely. Without
+                         it, R2 has no path to reach R1's real WAN address at
+                         all, which breaks TWO things at once: the GRE tunnel
+                         (its destination becomes unreachable) and, as a
+                         consequence, the OSPF adjacency riding over that
+                         tunnel.
+
+---------------- Fix (R2) ----------------
+
+Command                                            Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+ip route 0.0.0.0 0.0.0.0 GigabitEthernet0/0/0         Restores the static
+                                                    default route out R2's WAN
+                                                    interface. Re-adding it
+                                                    IMMEDIATELY triggers a "line
+                                                    protocol on Tunnel0 changed
+                                                    state to up" message — the
+                                                    tunnel destination is
+                                                    reachable again — and after
+                                                    a short wait, the OSPF
+                                                    neighbor relationship with
+                                                    R1 also re-establishes.
+
+---------------- Verify (PC2) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+ping 192.168.1.100        Succeeds now.
+
+==================================================
+PROBLEM 2 - R3: WRONG EIGRP WILDCARD MASK (NO EIGRP NEIGHBOR, NO RETURN ROUTE)
+==================================================
+
+---------------- Diagnose ----------------
+
+---------------- PC4 ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 192.168.0.100            Fails — but this time with NO "destination host
+                             unreachable" reply from the default gateway,
+                             suggesting a different kind of problem than
+                             Problem 1.
+
+---------------- R4 ----------------
+
+Command                Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip route             R4 has a default route and should be able to reach
+                         the network connected to R3 — nothing obviously
+                         wrong here.
+
+---------------- R3 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+enable
+show ip route                 R3 only has connected and local routes — no
+                             EIGRP (and no BGP) routes at all. This explains
+                             the symptom precisely: PC4's ping actually
+                             reached PC3 successfully, but R3 had no route
+                             back toward PC4's network to deliver the REPLY —
+                             a one-directional failure, not a total
+                             unreachability. (The missing BGP routes are
+                             noted but aren't relevant to this specific
+                             problem — that's Problem 3.)
+show ip eigrp neighbors        Confirms no EIGRP neighbors at all — R3 and R4
+                             haven't formed an adjacency.
+show ip protocols              Reveals the fault: under "Routing for
+                             Networks," 203.0.113.8/30 is listed correctly,
+                             and a plain "192.168.0.0" entry is listed as a
+                             classful /24 (fine, since EIGRP doesn't display a
+                             prefix length for a full classful network) — but
+                             there's ALSO a "192.168.0.0/32" entry, which is
+                             wrong: R3 has no interface with that EXACT
+                             address. R3's actual relevant interface address
+                             is 192.168.0.1 — meaning the `network` statement
+                             was configured with an overly-narrow wildcard
+                             mask (0.0.0.0, an exact-match /32) instead of
+                             the correct one covering the whole /24
+                             (0.0.0.255), so EIGRP was never actually
+                             activated on that interface at all.
+
+---------------- Fix (R3) ----------------
+
+Command                                    Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+router eigrp 100
+ no network 192.168.0.0 0.0.0.0              Removes the incorrect, overly-
+                                            narrow network statement.
+ network 192.168.0.0 0.0.0.255                Re-adds it with the correct
+                                            wildcard, covering the full /24 —
+                                            immediately, the EIGRP adjacency
+                                            with R4 comes up.
+
+---------------- Verify ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+show ip route (on R3)     Now shows a route learned via EIGRP for PC4's
+                         network.
+ping 192.168.0.100         Succeeds now — the ping reaches PC3 and, this
+ (from PC4)                time, the reply successfully finds its way back to
+                         PC4 via the newly-learned EIGRP route.
+
+==================================================
+PROBLEM 3 - R3: PPP LINK TO THE ISP REVERTED TO DEFAULT HDLC (BGP SESSION BROKEN)
+==================================================
+
+---------------- Diagnose ----------------
+
+The last remaining problem: hosts in Enterprise B still can't reach
+hosts in Enterprise A — suspected to be related to R3's still-missing
+BGP routes.
+
+---------------- R3 ----------------
+
+Command                    Result / Explanation
+-----------------------------------------------------------------------------------------
+show ip bgp summary            Confirms the neighbor (the ISP, 203.0.113.9,
+                             AS 65001) is correctly configured — the BGP
+                             configuration itself looks fine.
+show ip bgp neighbors          Shows BGP state as "Active" — NOT the desired
+                             "Established" state. "Active" specifically means
+                             BGP is actively attempting to form the TCP
+                             connection needed for the session, but hasn't
+                             succeeded — a strong hint the problem is at a
+                             lower layer than BGP configuration itself.
+show interface Serial0/0/0     Reveals the fault: the interface is using
+                             HDLC encapsulation — but this link is supposed
+                             to use PPP (as configured in Lab 075).
+show run                       Confirms PPP is missing from the interface
+                             configuration entirely — however, scrolling up,
+                             the correct CHAP username/password combination
+                             IS still present. Only the encapsulation and PPP
+                             authentication commands themselves are missing —
+                             the credentials survived, but the protocol
+                             settings that would actually use them didn't.
+
+---------------- Fix (R3) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+configure terminal
+interface Serial0/0/0
+ shutdown
+ encapsulation ppp                       Restores PPP encapsulation.
+ ppp authentication chap                 Restores CHAP authentication — the
+                                        already-present username/password
+                                        entry is now actually put to use again.
+ no shutdown
+
+---------------- Verify (R3) ----------------
+
+Command                Result
+-----------------------------------------------------------------------------------------
+(wait ~10 seconds for
+ the BGP adjacency to
+ form)
+show ip route             Now shows the full set of BGP-learned routes.
+ping 192.168.1.100         Succeeds — confirming full reachability restored
+ (from PC4)                between Enterprise B and Enterprise A.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show ip route                                    Confirms which routes (or
+                                                  lack thereof) exist at each
+                                                  diagnostic stage.
+show ip ospf neighbor / show ip eigrp neighbors    Confirms OSPF/EIGRP
+                                                  adjacency state.
+show ip bgp summary / show ip bgp neighbors        Confirms BGP neighbor
+                                                  configuration and session
+                                                  state (Idle, Active,
+                                                  Established, etc.).
+show interface <interface>                        Confirms actual
+                                                  encapsulation in use — the
+                                                  key command for catching a
+                                                  reverted-to-default HDLC
+                                                  fault.
+show ip protocols                                 Confirms exactly which
+                                                  networks/masks a routing
+                                                  protocol is actually
+                                                  activated on.
+show running-config                               General-purpose command for
+                                                  spotting a missing route,
+                                                  wrong wildcard mask, or
+                                                  missing PPP configuration.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Found and fixed R2 missing its static default route to the Internet,
+  which had broken both the GRE tunnel (unreachable destination) and,
+  consequently, the OSPF adjacency to R1 riding over it — restored with
+  a single `ip route` command, which immediately brought both back up.
+✓ Found and fixed R3's EIGRP `network` statement using an incorrect,
+  overly-narrow wildcard mask (an exact /32 instead of covering the
+  full /24), which had prevented any EIGRP adjacency with R4 at all —
+  meaning R3 could receive PC4's ping but had no route to send the
+  reply back.
+✓ Found and fixed R3's serial link to the ISP reverted to default HDLC
+  encapsulation (with PPP and CHAP authentication both missing, despite
+  the underlying username/password credentials still being configured),
+  which had left the BGP session permanently stuck in the "Active"
+  state rather than "Established" — restored by reconfiguring
+  `encapsulation ppp` and `ppp authentication chap`.
+✓ Verified full end-to-end connectivity restored between Enterprise A
+  and Enterprise B after all three fixes.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• A missing route can break multiple dependent things at once — R2's
+  single missing static route simultaneously broke the GRE tunnel (a
+  direct consequence: the tunnel destination became unreachable) and
+  the OSPF adjacency riding on top of it (a second-order consequence) —
+  a clear demonstration of how one foundational routing fault can
+  cascade into multiple higher-layer symptoms.
+• One-directional reachability failures (no unreachable message) vs.
+  two-directional ones (with an unreachable message) — Problem 1's
+  symptom (an explicit "destination host unreachable" reply) indicated
+  the local gateway itself had no route; Problem 2's symptom (a silent
+  failure with no such reply) indicated the FORWARD path worked but the
+  RETURN path didn't — a useful diagnostic distinction for narrowing
+  down where in a path a fault actually lives.
+• An overly-narrow EIGRP wildcard mask silently excludes the intended
+  interface — `0.0.0.0` (exact match) instead of `0.0.0.255` (whole
+  /24) means the `network` statement technically "succeeds" (no error)
+  but activates EIGRP on nothing real, since no interface's address is
+  likely to exactly equal the bare network address itself.
+• BGP session state "Active" as a specific diagnostic signal — distinct
+  from "Idle" (seen in Lab 068, meaning BGP isn't even trying) and
+  "Established" (fully working); "Active" specifically means BGP is
+  currently attempting to establish the underlying TCP connection but
+  hasn't succeeded — pointing troubleshooting toward a lower-layer
+  problem (like encapsulation) rather than the BGP configuration itself.
+• Configuration reverting to a DEFAULT rather than being deleted
+  outright — R3's encapsulation reverting to HDLC (the IOS default for
+  serial interfaces) while its username/password credentials remained
+  untouched shows that a fault can be a partial reset to defaults
+  rather than a clean removal — worth checking `show interface` for
+  actual current state, not just assuming a missing symptom-relevant
+  command was simply deleted.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully diagnosed and fixed three separate faults across the
+combined Lab 075 network: R2's missing static default route (which had
+broken both its GRE tunnel and OSPF adjacency to R1), R3's EIGRP
+`network` statement using an incorrect exact-match wildcard mask
+(which had prevented any EIGRP adjacency — and therefore any return
+route — to R4), and R3's serial link to the ISP reverted to default
+HDLC encapsulation (which had left its BGP session permanently stuck in
+the "Active" state). Full end-to-end connectivity between Enterprise A
+and Enterprise B was confirmed restored after all three fixes — the
+final lab in this CCNA Routing & Switching series.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+One fault, multiple cascading symptoms
+  R2's single missing route broke two seemingly-separate things (the
+  tunnel and OSPF) at once.
+  Exam: don't assume multiple broken things automatically mean multiple
+  separate faults — always check whether a "higher-layer" symptom
+  (like a broken OSPF adjacency) might actually be a downstream
+  consequence of a more fundamental problem (like basic IP
+  reachability to the tunnel destination).
+  Real world: this cascading-failure pattern is extremely common in
+  real networks — experienced engineers habitually check the most
+  fundamental layer first (basic reachability) before assuming a more
+  specific protocol (OSPF, BGP, etc.) itself is misconfigured.
+
+Silent (no-reply) failures pointing at a return-path problem
+  The absence of a "destination unreachable" message, specifically,
+  was itself diagnostic information.
+  Exam: recognize that a ping simply timing out with NO reply at all
+  (rather than an explicit unreachable/TTL-exceeded message) often
+  indicates the request got through but the REPLY couldn't find its way
+  back — pointing troubleshooting toward the responding device's
+  routing table rather than the path leading to it.
+  Real world: this distinction is a genuine, practical troubleshooting
+  technique real engineers use — the specific FORM of a failed ping's
+  output (or lack of output) carries real diagnostic signal, not just
+  the binary pass/fail result.
+
+BGP state "Active" specifically implicating a lower layer
+  A named, specific BGP session state pointing troubleshooting in a
+  specific direction.
+  Exam: know the BGP state progression (Idle -> Connect -> Active ->
+  OpenSent -> OpenConfirm -> Established) at least well enough to
+  recognize that "Active" means BGP itself is trying but failing to
+  even establish the underlying TCP connection — suggesting a Layer 1/2
+  problem (like this lab's encapsulation mismatch) rather than a BGP
+  configuration error, since the BGP configuration itself was already
+  confirmed correct.
+  Real world: this exact diagnostic logic — "BGP config looks right,
+  session won't establish, check the underlying link/encapsulation
+  next" — is standard real-world BGP troubleshooting sequence,
+  especially over WAN links where encapsulation/Layer 2 issues are a
+  common root cause distinct from routing configuration itself.
+
+==================================================
+END OF LAB
+==================================================

@@ -1,0 +1,289 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 052 - InterVLAN Routing (SVI, Router on a Stick)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+Configure inter-VLAN routing two different ways, on two independent
+small networks. On SW1 (a multilayer switch, with no router present at
+all), configure inter-VLAN routing using SVIs (Switched Virtual
+Interfaces) directly on the switch. On SW2/R2, review the router-on-a-
+stick method (already covered in the ICND1 labs) using subinterfaces on
+R2's G0/0.
+
+==================================================
+TOPOLOGY
+==================================================
+
+  Network A - SVI-based inter-VLAN routing (no router at all)
+
+  +--------+                    +--------+
+  |  PC1   |  10.0.1.10         |  PC2   |  10.0.2.10
+  +---+----+  VLAN 10           +---+----+  VLAN 20
+      |                              |
+      +-------------+----------------+
+                     |
+               +-----+-----+
+               |    SW1    |   Multilayer switch (IP routing enabled)
+               +-----------+
+               interface VLAN 10 (SVI) = 10.0.1.1/24
+               interface VLAN 20 (SVI) = 10.0.2.1/24
+
+  Network B - Router-on-a-stick inter-VLAN routing (independent of
+  Network A — a separate small network in this same lab)
+
+  +--------+                    +--------+
+  |  PC3   |  10.0.3.10         |  PC4   |  10.0.4.10
+  +---+----+  VLAN 30           +---+----+  VLAN 40
+      |                              |
+      +-------------+----------------+
+                     |
+               +-----+-----+
+               |    SW2    |
+               +-----+-----+
+                  G0/1 (trunk)
+                     |
+               +-----+-----+
+               |    R2     |   Router-on-a-stick
+               +-----------+
+               G0/0.30 (encapsulation dot1Q 30) = 10.0.3.1/24
+               G0/0.40 (encapsulation dot1Q 40) = 10.0.4.1/24
+
+Network A: PC1 (VLAN 10) and PC2 (VLAN 20) both connect to SW1 — a
+multilayer switch with no router attached at all, using SVIs (one
+logical Layer 3 interface per VLAN, directly on the switch) to route
+between them. Network B: PC3 (VLAN 30) and PC4 (VLAN 40) connect to
+SW2, which trunks a single link to R2; R2 performs router-on-a-stick
+inter-VLAN routing via two subinterfaces on its one physical G0/0 link.
+SW1's and SW2's PC-facing access ports were already pre-configured to
+their correct VLANs before this lab begins.
+
+==================================================
+IP ADDRESSING
+==================================================
+
+Device   VLAN   Role                    IP Address       Notes
+----------------------------------------------------------------------------------
+PC1      10     Host                    10.0.1.10        Network A
+PC2      20     Host                    10.0.2.10        Network A
+SW1      10     SVI (interface VLAN 10)  10.0.1.1         Network A gateway
+SW1      20     SVI (interface VLAN 20)  10.0.2.1         Network A gateway
+PC3      30     Host                    10.0.3.10        Network B
+PC4      40     Host                    10.0.4.10        Network B
+R2       30     Subinterface G0/0.30     10.0.3.1         Network B gateway
+R2       40     Subinterface G0/0.40     10.0.4.1         Network B gateway
+
+==================================================
+STEP 1 - NETWORK A: INTER-VLAN ROUTING WITH SVIs ON SW1
+==================================================
+
+---------------- Confirm the problem ----------------
+
+---------------- PC1 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.2.10        Fails — PC1 (VLAN 10) cannot yet reach PC2 (VLAN 20); no
+                      inter-VLAN routing is configured yet.
+
+---------------- Configure (SW1) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+ip routing                          Enables Layer 3 routing capability on the
+                                    switch — required before SVIs can actually
+                                    route between VLANs, since a switch is Layer 2
+                                    only by default.
+interface vlan 10                   Creates/enters the SVI (logical Layer 3
+                                    interface) for VLAN 10.
+ ip address 10.0.1.1 255.255.255.0    Assigned as VLAN 10's default gateway — every
+                                     PC in VLAN 10 was already configured to use
+                                     the ".1" address of its subnet as its default
+                                     gateway.
+ no shutdown                        SVIs are administratively shut down by
+                                    default and must be explicitly enabled.
+interface vlan 20
+ ip address 10.0.2.1 255.255.255.0
+ no shutdown
+
+SW1's access ports facing PC1 and PC2 were already configured for
+VLAN 10 and VLAN 20 respectively before this lab.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+show vlan brief (on SW1)     Confirms VLAN 10/20 exist with the correct access
+                             ports assigned.
+ping 10.0.2.10 (from PC1)     Succeeds — SW1 now routes between VLAN 10 and
+                             VLAN 20 directly, with no router involved at all.
+
+==================================================
+STEP 2 - NETWORK B: INTER-VLAN ROUTING WITH ROUTER-ON-A-STICK (SW2/R2)
+==================================================
+
+---------------- Confirm the problem ----------------
+
+---------------- PC3 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+ping 10.0.4.10        Fails — PC3 (VLAN 30) cannot yet reach PC4 (VLAN 40).
+
+---------------- Configure (SW2) ----------------
+
+Command                            Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/1        The uplink to R2.
+ switchport mode trunk               Configured as a trunk so it can carry both
+                                    VLAN 30 and VLAN 40 to R2.
+
+---------------- Configure (R2) ----------------
+
+Command                                Explanation
+-----------------------------------------------------------------------------------------
+enable
+configure terminal
+interface GigabitEthernet0/0            R2's single physical interface connected to
+ no shutdown                            SW2's trunk — enabled first.
+interface GigabitEthernet0/0.30         Creates a logical subinterface for VLAN 30.
+ encapsulation dot1Q 30                  Ties this subinterface to VLAN 30's
+                                        802.1Q tag.
+ ip address 10.0.3.1 255.255.255.0        Serves as VLAN 30's default gateway.
+interface GigabitEthernet0/0.40         Creates a second subinterface for VLAN 40.
+ encapsulation dot1Q 40
+ ip address 10.0.4.1 255.255.255.0
+
+SW2's access ports facing PC3 and PC4 were already configured for
+VLAN 30 and VLAN 40 respectively before this lab.
+
+---------------- Verify ----------------
+
+Command                    Result
+-----------------------------------------------------------------------------------------
+ping 10.0.4.10 (from PC3)     Succeeds — R2 now routes between VLAN 30 and
+                             VLAN 40 over its single physical link to SW2, using
+                             one subinterface per VLAN.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show vlan brief                                  Confirms VLAN existence and
+                                                  correct access-port assignment.
+show ip interface brief                           Confirms SVI/subinterface IP
+                                                  addresses and up/down status —
+                                                  remember SVIs and subinterfaces
+                                                  are both shut down by default
+                                                  and need `no shutdown`.
+show running-config                               Verify `ip routing`, SVI, trunk,
+                                                  and subinterface configuration.
+ping <destination>                                 Verify inter-VLAN reachability.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Enabled `ip routing` on SW1 and configured two SVIs (interface VLAN
+  10, interface VLAN 20), each with an IP address and `no shutdown`,
+  giving SW1 itself the ability to route between VLANs with no router
+  present at all — verified PC1 could then ping PC2.
+✓ Configured SW2's uplink to R2 as a trunk, then configured two
+  subinterfaces on R2's single G0/0 physical interface (G0/0.30 and
+  G0/0.40), each tagged with `encapsulation dot1Q <vlan>` and given an
+  IP address — the router-on-a-stick method — verified PC3 could then
+  ping PC4.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• SVI (Switched Virtual Interface) — a logical Layer 3 interface
+  (`interface vlan <id>`) configured directly on a multilayer switch,
+  giving that VLAN a routable IP address without needing any external
+  router; requires `ip routing` enabled globally on the switch first,
+  and (like a physical interface) must be enabled with `no shutdown`.
+• SVI-based inter-VLAN routing vs. router-on-a-stick — SVIs route
+  entirely within the switch itself (faster, no dependency on an
+  external device or its single-link bandwidth ceiling), while
+  router-on-a-stick relies on a separate router and a single trunk link
+  carrying all inter-VLAN traffic; SVIs are generally preferred when a
+  multilayer switch is available, with router-on-a-stick reserved for
+  networks where only a standard Layer 2 switch and a router are
+  present.
+• Multilayer switch — a switch with Layer 3 (routing) capability, as
+  opposed to a purely Layer 2 switch; `ip routing` is what actually
+  activates that Layer 3 capability, since even a multilayer-capable
+  switch behaves as pure Layer 2 by default.
+• Router-on-a-stick (reviewed) — one physical router interface split
+  into per-VLAN subinterfaces via `encapsulation dot1Q <vlan-id>`,
+  letting a single physical link to a switch trunk carry inter-VLAN
+  routed traffic for every VLAN configured on it.
+• Both SVIs and router subinterfaces are administratively down by
+  default — `no shutdown` is required on each one individually, a
+  detail easy to forget since a physical interface's "up by default"
+  behavior doesn't apply here.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully configured inter-VLAN routing two different ways on two
+independent small networks: SVIs directly on SW1 (VLAN 10 ↔ VLAN 20,
+10.0.1.0/24 ↔ 10.0.2.0/24, no router involved), and router-on-a-stick
+using subinterfaces on R2 (VLAN 30 ↔ VLAN 40, 10.0.3.0/24 ↔
+10.0.4.0/24, via a single trunked link to SW2). Both methods were
+verified with a successful cross-VLAN ping.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+SVI vs. router-on-a-stick, when to use which
+  SVIs route on the switch itself; router-on-a-stick depends on an
+  external router and one shared physical link.
+  Exam: know the prerequisite difference — SVIs require a Layer 3
+  (multilayer) switch and `ip routing` enabled; router-on-a-stick only
+  requires a plain Layer 2 switch plus any router with a trunk-capable
+  interface, making it usable in networks where a multilayer switch
+  isn't available (or budgeted for).
+  Real world: SVIs are strongly preferred in real deployments whenever
+  a multilayer switch exists, specifically because router-on-a-stick's
+  single physical link becomes a shared bandwidth bottleneck for ALL
+  inter-VLAN traffic combined — SVI-based routing scales far better as
+  VLAN count and traffic grow.
+
+`ip routing` as the actual Layer 3 "on switch" — off by default
+  A multilayer switch's Layer 3 capability is a global feature that
+  must be explicitly turned on.
+  Exam: a very common "why doesn't inter-VLAN routing work" trap on a
+  switch that otherwise looks fully configured (SVIs created, addressed,
+  and enabled) — check `ip routing` first.
+  Real world: this is also the first thing checked in practice — SVIs
+  with correct IP addresses that still can't route between each other
+  almost always trace back to `ip routing` being missing.
+
+SVIs and subinterfaces default to shutdown
+  Both interface types come up administratively down and need an
+  explicit `no shutdown`.
+  Exam: expect a scenario where an SVI or subinterface has a correct IP
+  address configured but traffic still fails — `show ip interface
+  brief` showing "administratively down" is the tell.
+  Real world: this remains a common, easy-to-forget step even for
+  experienced engineers, since it doesn't apply to most physical
+  interfaces the same way — worth checking by habit on any newly
+  created logical interface (SVI, subinterface, loopback, tunnel).
+
+==================================================
+END OF LAB
+==================================================

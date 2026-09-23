@@ -1,0 +1,274 @@
+==================================================
+LAB NAME
+==================================================
+
+Lab 049 - STP Election (Spanning Tree Protocol)
+
+==================================================
+LAB OBJECTIVE
+==================================================
+
+A pure analysis lab — no configuration is performed. Given a
+pre-built four-switch ring topology with STP already running, work out
+by hand which switch is the root bridge, which ports are root ports,
+designated ports, and the one blocked (alternate) port, purely from
+bridge priorities, MAC addresses, and per-link STP costs — then confirm
+every answer with `show spanning-tree` on each switch.
+
+==================================================
+TOPOLOGY
+==================================================
+
+                         +----------+
+                         |   SW1    |   ROOT BRIDGE
+                         +----+-----+   (lowest bridge ID: priority 32769
+                        F0/1 |   | F0/2  tied with all others, wins on
+                              |   |       lowest MAC address)
+                   (designated)| |(designated)
+                              |   |
+              +----------------+   +----------------+
+              |                                     |
+         +----+-----+                          +----+-----+
+         |   SW2    |                          |   SW3    |
+         +----+-----+                          +----+-----+
+             F0/2 = root port              F0/1 = root port
+             (cost 19 to SW1)              (cost 19 to SW1)
+             F0/1 = designated             G0/1 = designated
+                |                               |
+                |         F0/1 -------- G0/1    |
+                +---------(BLOCKED)-------------+
+                        SW4's F0/1 = alternate/blocked
+                        SW4's G0/1 = root port
+                     (cost via G0/1->SW3: 4+19=23
+                      beats cost via F0/1->SW2: 19+19=38)
+
+The four switches form a physical ring: SW1-SW2, SW1-SW3, SW2-SW4, and
+SW3-SW4 — no direct SW1-SW4 or SW2-SW3 link. SW1-SW2, SW1-SW3, and
+SW2-SW4 are all Fast Ethernet links (STP cost 19 each); SW3-SW4 is a
+Gigabit Ethernet link (STP cost 4). This single loop needs exactly one
+port blocked to eliminate the Layer-2 loop while keeping every switch
+reachable.
+
+==================================================
+STEP 1 - DETERMINE THE ROOT BRIDGE
+==================================================
+
+Reasoning (worked by hand, before checking any `show` command):
+
+All four switches share the same bridge priority (32769 = default
+32768 + VLAN 1). With priorities tied, the switch with the lowest MAC
+address wins the root bridge election. Comparing MAC addresses:
+- SW2 and SW4 are ruled out immediately — neither has the lowest MAC.
+- SW1 and SW3 (sic — this narrows to comparing SW1 against the
+  remaining candidate) share the same first four hex characters, but
+  SW1's next four characters are lower.
+- **Conclusion: SW1 has the lowest MAC address and becomes the root
+  bridge.**
+
+Since every port on the root bridge is, by definition, a designated
+port: **SW1's F0/1 and F0/2 are both designated ports.**
+
+==================================================
+STEP 2 - DETERMINE EACH OTHER SWITCH'S ROOT PORT
+==================================================
+
+Each non-root switch selects the single port with the lowest total STP
+cost back to the root bridge as its root port.
+
+- **SW2**: only one path to the root, directly to SW1 via F0/2 (cost
+  19). **SW2's F0/2 = root port.**
+- **SW3**: only one path to the root, directly to SW1 via F0/1 (cost
+  19). **SW3's F0/1 = root port.**
+- **SW4**: two possible paths —
+  - via F0/1 to SW2 (Fast Ethernet, cost 19), then SW2's own cost to
+    root (19) → total cost 19 + 19 = **38**.
+  - via G0/1 to SW3 (Gigabit Ethernet, cost 4), then SW3's own cost to
+    root (19) → total cost 4 + 19 = **23**.
+  - 23 < 38, so **SW4's G0/1 = root port** (the lower-cost path, via
+    SW3).
+
+The port directly across a link from a root port is always a
+designated port (someone has to forward on that segment), so:
+**SW3's G0/1 (facing SW4) = designated port.**
+
+==================================================
+STEP 3 - DETERMINE THE BLOCKED (ALTERNATE) PORT
+==================================================
+
+The one remaining undetermined segment is SW2-SW4 (via SW2's F0/1 and
+SW4's F0/1) — the redundant link that closes the ring and must have
+exactly one side blocked.
+
+To decide which side, compare each switch's own total root path cost:
+- SW2's cost to root = 19 (directly to SW1).
+- SW4's cost to root = 23 (via its root port, G0/1 → SW3 → SW1).
+
+SW2 has the lower total cost to the root, so **SW2's F0/1 = designated
+port**, and **SW4's F0/1 = alternate (blocked) port**.
+
+==================================================
+STEP 4 - VERIFY EVERY ANSWER WITH show spanning-tree
+==================================================
+
+---------------- SW1 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+enable
+show spanning-tree   Confirms "This bridge is the root," and both F0/1 and F0/2
+                     are listed as designated ports — matching Step 1.
+
+---------------- SW2 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+enable
+show spanning-tree   F0/1 is designated, F0/2 is the root port — matching Steps 2
+                     and 3.
+
+---------------- SW3 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+enable
+show spanning-tree   F0/1 is the root port, G0/1 is designated — matching Step 2.
+
+---------------- SW4 ----------------
+
+Command             Result
+-----------------------------------------------------------------------------------------
+enable
+show spanning-tree   F0/1 is alternate (blocked), G0/1 is the root port —
+                     matching Steps 2 and 3, confirming every hand-worked
+                     answer was correct.
+
+==================================================
+VERIFICATION COMMANDS
+==================================================
+
+Command                                          Explanation
+-----------------------------------------------------------------------------------------
+show spanning-tree                               Displays root bridge identity,
+                                                  this switch's bridge ID, and every
+                                                  port's STP role/state and cost —
+                                                  the single command used throughout
+                                                  this lab to confirm each answer.
+show spanning-tree summary                        Quick summary of STP mode and
+                                                  per-VLAN root/status.
+
+==================================================
+LAB SUMMARY
+==================================================
+
+✓ Determined SW1 is the root bridge by comparing bridge priorities
+  (tied at default) and then MAC addresses (SW1 lowest).
+✓ Marked both of SW1's ports (F0/1, F0/2) as designated, since every
+  port on a root bridge is automatically designated.
+✓ Calculated each non-root switch's lowest-cost path to the root and
+  identified the resulting root ports: SW2 F0/2, SW3 F0/1, and SW4 G0/1
+  (chosen over SW4's alternate F0/1 path by comparing total path cost,
+  23 vs. 38).
+✓ Identified the one remaining redundant segment (SW2-SW4) and
+  determined which side blocks by comparing each switch's own total
+  root path cost — SW2's F0/1 designated (lower cost, 19), SW4's F0/1
+  alternate/blocked (higher cost, 23).
+✓ Verified every hand-derived answer against `show spanning-tree`
+  output on all four switches, and all matched.
+
+==================================================
+CONCEPTS LEARNED
+==================================================
+
+• Root bridge election — decided first by lowest bridge priority (a
+  configurable value, default 32768/32769 per VLAN), and only by lowest
+  MAC address as a tiebreaker when priorities are equal; this lab's
+  election was decided entirely by MAC address since every switch kept
+  the default priority.
+• Root port — the single port on a non-root switch with the lowest
+  total STP cost back to the root bridge, always in the forwarding
+  state; every non-root switch has exactly one.
+• Designated port — the forwarding port on a given network segment;
+  every port on the root bridge is automatically designated, and on any
+  other segment, whichever connected switch has the lower total cost to
+  the root (or wins a tiebreaker) puts its port on that segment into
+  the designated role.
+• Alternate (blocked) port — the "loser" port on a redundant segment
+  where the other side is already designated; it does not forward
+  traffic but continues to receive BPDUs, ready to take over if the
+  active path fails. (Called "blocking" in classic STP terminology and
+  "alternate" in Rapid STP/RSTP terminology — both describe the same
+  non-forwarding role.)
+• Comparing STP path cost across multiple hops — a switch's total cost
+  to the root isn't just the cost of its own directly-connected link;
+  it's the sum of every link's cost along the specific path back to the
+  root bridge, exactly as calculated for SW4 in this lab (comparing
+  4+19=23 against 19+19=38 to choose its root port).
+• Breaking a physical ring with STP — a topology with exactly one loop
+  (as in this 4-switch ring) requires exactly one port blocked to
+  eliminate it while every switch remains reachable via the remaining
+  tree of forwarding links.
+
+==================================================
+LAB RESULT
+==================================================
+
+Successfully worked out, entirely by hand from bridge priorities, MAC
+addresses, and per-link STP costs, the complete STP topology of a
+four-switch physical ring: SW1 as root bridge (both ports designated),
+SW2's F0/2 and SW3's F0/1 as root ports (direct links to SW1), SW4's
+G0/1 as root port (the lower-cost 23 path via SW3, beating the 38-cost
+path via SW2), SW3's G0/1 and SW2's F0/1 as designated ports on their
+respective segments, and SW4's F0/1 as the one blocked (alternate)
+port closing the loop. Every answer was confirmed correct via
+`show spanning-tree` on all four switches.
+
+==================================================
+STUDY NOTES, EXAM SCENARIOS & REAL-WORLD CONTEXT
+==================================================
+
+Working an STP election by hand from a diagram
+  This exact kind of "given this topology, determine every port's role"
+  problem is a staple format.
+  Exam: always solve in this fixed order — (1) root bridge by lowest
+  bridge ID, (2) every other switch's root port by lowest total path
+  cost, (3) designated port on every segment (the root bridge's ports
+  always win; elsewhere, lowest path cost of the two connected switches
+  wins), (4) whatever's left on a redundant segment is blocked/
+  alternate. Following this order avoids the most common mistake:
+  trying to determine the blocked port before nailing down every root
+  port first.
+  Real world: being able to predict STP's outcome from a topology
+  diagram (before ever touching a CLI) is exactly the skill used when
+  planning cabling/uplink placement in a new network, or when
+  diagnosing why traffic is taking an unexpected path in an existing
+  one.
+
+Multi-hop path cost comparison (SW4's root port choice)
+  SW4's decision came down to comparing a 2-hop cheap path (Gigabit +
+  Fast Ethernet = 23) against a 2-hop path using two Fast Ethernet
+  segments (19+19 = 38).
+  Exam: a common trap is assuming the path with fewer physical hops
+  automatically wins, or assuming the directly-attached link's own cost
+  alone decides the root port — both are wrong; only the cumulative
+  cost of the entire path back to the root matters.
+  Real world: this is exactly why upgrading even one link in a path
+  (e.g. Fast Ethernet to Gigabit) can silently change which path traffic
+  takes through a switched network — STP recalculates the whole path
+  cost, and a previously "expensive" path can suddenly win, shifting
+  traffic onto a link that wasn't carrying it before.
+
+Alternate vs. blocking port terminology
+  Classic 802.1D STP calls a non-forwarding redundant port "blocking";
+  Rapid STP/RSTP (and Rapid PVST+) calls the same role "alternate."
+  Exam: know both terms refer to the same functional role and expect
+  either term depending on which STP version a question references —
+  this lab's own `show spanning-tree` output uses "alternate" since the
+  switches (per the STP labs in this series) support Rapid PVST+.
+  Real world: `show spanning-tree` output terminology varies with the
+  configured STP mode, so recognizing "alternate" and "blocking" as
+  equivalent when reading real device output (not just exam questions)
+  avoids confusion during actual troubleshooting.
+
+==================================================
+END OF LAB
+==================================================
